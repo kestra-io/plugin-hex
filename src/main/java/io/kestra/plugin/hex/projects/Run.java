@@ -86,8 +86,7 @@ import static io.kestra.core.utils.Rethrow.throwSupplier;
         )
     }
 )
-public class Run extends Task implements RunnableTask<Run.Output> {
-    static final String DEFAULT_BASE_URL = "https://app.hex.tech/api/v1";
+public class Run extends Task implements RunnableTask<Run.Output>, HexConnectionInterface {
     private static final String REATTACH_KV_PREFIX = "hex_run_reattach_";
 
     @Schema(title = "Hex project ID", description = "The ID of the Hex project to run.")
@@ -160,7 +159,6 @@ public class Run extends Task implements RunnableTask<Run.Output> {
 
         var rProjectId = runContext.render(this.projectId).as(String.class)
             .orElseThrow(() -> new IllegalArgumentException("projectId must be set"));
-        var rBaseUrl = runContext.render(this.baseUrl).as(String.class).orElse(DEFAULT_BASE_URL);
         var rWait = runContext.render(this.wait).as(Boolean.class).orElse(true);
         var rPollFrequency = runContext.render(this.pollFrequency).as(Duration.class).orElse(Duration.ofSeconds(5));
         if (rPollFrequency.isNegative() || rPollFrequency.isZero()) {
@@ -175,10 +173,10 @@ public class Run extends Task implements RunnableTask<Run.Output> {
         var rInputParams = runContext.render(this.inputParams).asMap(String.class, Object.class);
 
         String runId = tryReattach(runContext);
-        HexRunResponse startResponse = null;
+        HexRun startedRun = null;
         if (runId == null) {
-            startResponse = HexClient.startRun(runContext, rBaseUrl, this.apiToken, rProjectId, rInputParams);
-            runId = startResponse.getRunId();
+            startedRun = this.startRun(runContext, rProjectId, rInputParams);
+            runId = startedRun.runId();
             persistRunId(runContext, runId, rMaxDuration);
             logger.info("Started Hex run '{}' for project '{}'", runId, rProjectId);
         } else {
@@ -186,18 +184,18 @@ public class Run extends Task implements RunnableTask<Run.Output> {
         }
 
         String finalRunId = runId;
-        killable.set(() -> safelyCancel(runContext, rBaseUrl, rProjectId, finalRunId, logger));
+        killable.set(() -> safelyCancel(runContext, rProjectId, finalRunId, logger));
 
-        var statusResponse = HexClient.getRunStatus(runContext, rBaseUrl, this.apiToken, rProjectId, runId);
-        AtomicReference<HexRunStatusResponse> lastSeen = new AtomicReference<>(statusResponse);
+        var currentRun = this.getRun(runContext, rProjectId, runId);
+        AtomicReference<HexRun> lastSeen = new AtomicReference<>(currentRun);
 
-        if (rWait && !HexRuns.isTerminal(statusResponse.getStatus())) {
+        if (rWait && !currentRun.status().isTerminal()) {
             try {
-                statusResponse = Await.until(
+                currentRun = Await.until(
                     throwSupplier(() -> {
-                        var current = HexClient.getRunStatus(runContext, rBaseUrl, this.apiToken, rProjectId, finalRunId);
-                        lastSeen.set(current);
-                        return HexRuns.isTerminal(current.getStatus()) ? current : null;
+                        var polled = this.getRun(runContext, rProjectId, finalRunId);
+                        lastSeen.set(polled);
+                        return polled.status().isTerminal() ? polled : null;
                     }),
                     rPollFrequency,
                     rMaxDuration
@@ -205,23 +203,23 @@ public class Run extends Task implements RunnableTask<Run.Output> {
             } catch (TimeoutException e) {
                 throw new TimeoutException(
                     "Hex run '" + runId + "' did not complete within " + rMaxDuration
-                        + ", last observed status was " + lastSeen.get().getStatus()
+                        + ", last observed status was " + lastSeen.get().status()
                 );
             }
         }
 
-        if (HexRuns.isTerminal(statusResponse.getStatus())) {
+        if (currentRun.status().isTerminal()) {
             clearReattachState(runContext);
         }
 
-        if (HexRuns.isFailure(statusResponse.getStatus())) {
+        if (currentRun.status().isFailure()) {
             throw new IllegalStateException(
-                "Hex run '" + runId + "' for project '" + rProjectId + "' ended with status " + statusResponse.getStatus()
-                    + "; see the run in Hex for details: " + statusResponse.getRunUrl()
+                "Hex run '" + runId + "' for project '" + rProjectId + "' ended with status " + currentRun.status()
+                    + "; see the run in Hex for details: " + currentRun.runUrl()
             );
         }
 
-        return HexRuns.toOutput(runId, startResponse, statusResponse);
+        return Output.of(merge(runId, startedRun, currentRun));
     }
 
     @Override
@@ -231,13 +229,31 @@ public class Run extends Task implements RunnableTask<Run.Output> {
         }
     }
 
-    private void safelyCancel(RunContext runContext, String rBaseUrl, String rProjectId, String runId, Logger logger) {
+    private void safelyCancel(RunContext runContext, String rProjectId, String runId, Logger logger) {
         try {
-            HexClient.cancelRun(runContext, rBaseUrl, this.apiToken, rProjectId, runId);
+            this.cancelRun(runContext, rProjectId, runId);
             logger.info("Cancelled Hex run '{}' for project '{}'", runId, rProjectId);
         } catch (Exception e) {
             logger.warn("Could not cancel Hex run '{}' for project '{}': {}", runId, rProjectId, e.getMessage());
         }
+    }
+
+    // The start response and the status response overlap; prefers the status response's fields (the
+    // freshest data) and falls back to the start response only for fields a status response could
+    // theoretically omit.
+    private static HexRun merge(String runId, HexRun started, HexRun status) {
+        return new HexRun(
+            status.projectId(),
+            runId,
+            status.runUrl() != null ? status.runUrl() : (started != null ? started.runUrl() : null),
+            status.runStatusUrl(),
+            status.status(),
+            status.projectVersion() != null ? status.projectVersion() : (started != null ? started.projectVersion() : null),
+            status.startTime(),
+            status.endTime(),
+            status.elapsedTime(),
+            status.traceId() != null ? status.traceId() : (started != null ? started.traceId() : null)
+        );
     }
 
     // Reattach is persisted to the flow's namespace KV store keyed by this specific task run ID, which is
@@ -304,5 +320,18 @@ public class Run extends Task implements RunnableTask<Run.Output> {
 
         @Schema(title = "Trace ID", description = "Identifier Hex uses to correlate this run internally, useful when contacting Hex support.")
         private final String traceId;
+
+        static Output of(HexRun run) {
+            return Output.builder()
+                .runId(run.runId())
+                .runUrl(run.runUrl())
+                .status(run.status() != null ? run.status().name() : null)
+                .projectVersion(run.projectVersion())
+                .startTime(run.startTime())
+                .endTime(run.endTime())
+                .elapsedTime(run.elapsedDuration())
+                .traceId(run.traceId())
+                .build();
+        }
     }
 }

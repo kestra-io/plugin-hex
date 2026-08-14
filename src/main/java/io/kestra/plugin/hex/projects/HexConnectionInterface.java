@@ -5,6 +5,7 @@ import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.Optional;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -21,93 +22,76 @@ import io.kestra.core.runners.RunContext;
 import io.kestra.core.serializers.JacksonMapper;
 
 /**
- * Minimal Hex REST API client shared by {@link Run} and {@link Trigger}. Hex ships no Java SDK,
- * so every call goes through Kestra's own HTTP client rather than a third-party dependency.
+ * Hex REST API connection shared by {@link Run} and {@link Trigger}. Hex ships no Java SDK, so every
+ * call goes through Kestra's own HTTP client rather than a third-party dependency.
+ *
+ * A task and a trigger cannot share a superclass (one extends Task, the other AbstractTrigger), so
+ * this interface carries the connection behaviour as default methods instead: both implementors only
+ * need to expose {@link #getApiToken()} and {@link #getBaseUrl()}, which their existing Lombok
+ * {@code @Getter} already provides.
  */
-final class HexClient {
+interface HexConnectionInterface {
+    String DEFAULT_BASE_URL = "https://app.hex.tech/api/v1";
 
-    private HexClient() {
-    }
+    Property<String> getApiToken();
 
-    static HexRunResponse startRun(
-        RunContext runContext,
-        String rBaseUrl,
-        Property<String> apiToken,
-        String rProjectId,
-        Map<String, Object> rInputParams
-    ) throws IOException, IllegalVariableEvaluationException, HttpClientException {
+    Property<String> getBaseUrl();
+
+    default HexRun startRun(RunContext runContext, String projectId, Map<String, Object> inputParams)
+        throws IOException, IllegalVariableEvaluationException, HttpClientException {
         var requestBuilder = HttpRequest.builder()
-            .uri(URI.create(rBaseUrl + "/projects/" + encode(rProjectId) + "/runs"))
+            .uri(URI.create(rBaseUrl(runContext) + "/projects/" + encode(projectId) + "/runs"))
             .method("POST")
             .body(
                 HttpRequest.JsonRequestBody.builder()
-                    .content(rInputParams == null || rInputParams.isEmpty() ? Map.of() : Map.of("inputParams", rInputParams))
+                    .content(inputParams == null || inputParams.isEmpty() ? Map.of() : Map.of("inputParams", inputParams))
                     .build()
             );
 
-        return parse(request(runContext, apiToken, requestBuilder), HexRunResponse.class, "start a run for project '" + rProjectId + "'");
+        return parse(request(runContext, requestBuilder), HexRun.class, "start a run for project '" + projectId + "'");
     }
 
-    static HexRunStatusResponse getRunStatus(
-        RunContext runContext,
-        String rBaseUrl,
-        Property<String> apiToken,
-        String rProjectId,
-        String runId
-    ) throws IOException, IllegalVariableEvaluationException, HttpClientException {
+    default HexRun getRun(RunContext runContext, String projectId, String runId)
+        throws IOException, IllegalVariableEvaluationException, HttpClientException {
         var requestBuilder = HttpRequest.builder()
-            .uri(URI.create(rBaseUrl + "/projects/" + encode(rProjectId) + "/runs/" + encode(runId)))
+            .uri(URI.create(rBaseUrl(runContext) + "/projects/" + encode(projectId) + "/runs/" + encode(runId)))
             .method("GET");
 
-        return parse(request(runContext, apiToken, requestBuilder), HexRunStatusResponse.class, "get the status of run '" + runId + "'");
+        return parse(request(runContext, requestBuilder), HexRun.class, "get the status of run '" + runId + "'");
     }
 
-    static HexRunListResponse listRecentRuns(
-        RunContext runContext,
-        String rBaseUrl,
-        Property<String> apiToken,
-        String rProjectId,
-        int limit,
-        String statusFilter
-    ) throws IOException, IllegalVariableEvaluationException, HttpClientException {
-        var query = new StringBuilder("?limit=").append(limit);
-        if (statusFilter != null && !statusFilter.isBlank()) {
-            query.append("&statusFilter=").append(encode(statusFilter));
-        }
-
+    default Optional<HexRun> latestCompletedRun(RunContext runContext, String projectId)
+        throws IOException, IllegalVariableEvaluationException, HttpClientException {
         var requestBuilder = HttpRequest.builder()
-            .uri(URI.create(rBaseUrl + "/projects/" + encode(rProjectId) + "/runs" + query))
+            .uri(URI.create(rBaseUrl(runContext) + "/projects/" + encode(projectId) + "/runs?limit=1&statusFilter=COMPLETED"))
             .method("GET");
 
-        return parse(request(runContext, apiToken, requestBuilder), HexRunListResponse.class, "list recent runs for project '" + rProjectId + "'");
+        var list = parse(request(runContext, requestBuilder), HexRunList.class, "list recent runs for project '" + projectId + "'");
+        return list.runs() == null || list.runs().isEmpty() ? Optional.empty() : Optional.of(list.runs().getFirst());
     }
 
-    static void cancelRun(
-        RunContext runContext,
-        String rBaseUrl,
-        Property<String> apiToken,
-        String rProjectId,
-        String runId
-    ) throws IOException, IllegalVariableEvaluationException, HttpClientException {
+    default void cancelRun(RunContext runContext, String projectId, String runId)
+        throws IOException, IllegalVariableEvaluationException, HttpClientException {
         var requestBuilder = HttpRequest.builder()
-            .uri(URI.create(rBaseUrl + "/projects/" + encode(rProjectId) + "/runs/" + encode(runId)))
+            .uri(URI.create(rBaseUrl(runContext) + "/projects/" + encode(projectId) + "/runs/" + encode(runId)))
             .method("DELETE");
 
-        request(runContext, apiToken, requestBuilder);
+        request(runContext, requestBuilder);
     }
 
-    private static HttpResponse<String> request(
-        RunContext runContext,
-        Property<String> apiToken,
-        HttpRequest.HttpRequestBuilder requestBuilder
-    ) throws IOException, IllegalVariableEvaluationException, HttpClientException {
+    private String rBaseUrl(RunContext runContext) throws IllegalVariableEvaluationException {
+        return runContext.render(this.getBaseUrl()).as(String.class).orElse(DEFAULT_BASE_URL);
+    }
+
+    private HttpResponse<String> request(RunContext runContext, HttpRequest.HttpRequestBuilder requestBuilder)
+        throws IOException, IllegalVariableEvaluationException, HttpClientException {
         var request = requestBuilder
             .addHeader("Content-Type", "application/json")
             .addHeader("Accept", "application/json")
             .build();
 
         var httpConfiguration = HttpConfiguration.builder()
-            .auth(BearerAuthConfiguration.builder().token(apiToken).build())
+            .auth(BearerAuthConfiguration.builder().token(this.getApiToken()).build())
             .build();
 
         try (HttpClient client = new HttpClient(runContext, httpConfiguration)) {

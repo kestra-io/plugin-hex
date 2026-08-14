@@ -66,7 +66,7 @@ import lombok.experimental.SuperBuilder;
         )
     }
 )
-public class Trigger extends AbstractTrigger implements PollingTriggerInterface, TriggerOutput<Run.Output> {
+public class Trigger extends AbstractTrigger implements PollingTriggerInterface, TriggerOutput<Run.Output>, HexConnectionInterface {
     private static final String WATERMARK_KV_PREFIX = "hex_trigger_last_completed_run_";
     // Only needs to survive long enough to prevent a re-fire across scheduler restarts; not tied to any
     // user-configurable duration, so a generous fixed value keeps the KV store from growing unbounded.
@@ -93,7 +93,7 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
     @NotNull
     @Builder.Default
     @PluginProperty(group = "connection")
-    private Property<String> baseUrl = Property.ofValue(Run.DEFAULT_BASE_URL);
+    private Property<String> baseUrl = Property.ofValue(DEFAULT_BASE_URL);
 
     @Schema(
         title = "Poll interval",
@@ -110,7 +110,6 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
 
         var rProjectId = runContext.render(this.projectId).as(String.class)
             .orElseThrow(() -> new IllegalArgumentException("projectId must be set"));
-        var rBaseUrl = runContext.render(this.baseUrl).as(String.class).orElse(Run.DEFAULT_BASE_URL);
 
         var kv = runContext.namespaceKv(context.getNamespace());
         var kvKey = watermarkKvKey(context.getFlowId(), context.getTriggerId());
@@ -127,37 +126,36 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
         // unfiltered limit=1 would return the newer in-flight run and silently miss the completion.
         // Ordering is assumed most-recent-first (Hex documents no sort parameter), so limit=1 yields the
         // latest completed run.
-        HexRunListResponse listResponse;
+        Optional<HexRun> latestRun;
         try {
-            listResponse = HexClient.listRecentRuns(runContext, rBaseUrl, this.apiToken, rProjectId, 1, HexRuns.COMPLETED);
+            latestRun = this.latestCompletedRun(runContext, rProjectId);
         } catch (Exception e) {
             logger.warn("Could not list Hex runs for project '{}': {}", rProjectId, e.getMessage());
             return Optional.empty();
         }
 
-        var runs = listResponse.getRuns();
-        if (runs == null || runs.isEmpty()) {
+        if (latestRun.isEmpty()) {
             logger.debug("No completed runs found yet for Hex project '{}'", rProjectId);
             return Optional.empty();
         }
 
-        var latest = runs.getFirst();
+        var latest = latestRun.get();
         // Defensive: statusFilter should guarantee this, but do not fire on anything non-terminal if the
         // API ever returns a broader set.
-        if (!HexRuns.COMPLETED.equals(latest.getStatus())) {
-            logger.debug("Latest Hex run '{}' for project '{}' is not completed, status={}", latest.getRunId(), rProjectId, latest.getStatus());
+        if (latest.status() != RunStatus.COMPLETED) {
+            logger.debug("Latest Hex run '{}' for project '{}' is not completed, status={}", latest.runId(), rProjectId, latest.status());
             return Optional.empty();
         }
 
-        if (latest.getRunId().equals(lastFiredRunId)) {
-            logger.debug("Hex run '{}' for project '{}' already fired, skipping", latest.getRunId(), rProjectId);
+        if (latest.runId().equals(lastFiredRunId)) {
+            logger.debug("Hex run '{}' for project '{}' already fired, skipping", latest.runId(), rProjectId);
             return Optional.empty();
         }
 
-        kv.put(kvKey, new KVValueAndMetadata(new KVMetadata(null, WATERMARK_TTL), latest.getRunId()));
+        kv.put(kvKey, new KVValueAndMetadata(new KVMetadata(null, WATERMARK_TTL), latest.runId()));
 
-        logger.info("Hex run '{}' for project '{}' completed, firing trigger", latest.getRunId(), rProjectId);
-        var output = HexRuns.toOutput(latest.getRunId(), null, latest);
+        logger.info("Hex run '{}' for project '{}' completed, firing trigger", latest.runId(), rProjectId);
+        var output = Run.Output.of(latest);
         return Optional.of(TriggerService.generateExecution(this, conditionContext, context, output));
     }
 
