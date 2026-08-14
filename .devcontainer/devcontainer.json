@@ -1,10 +1,10 @@
 {
-  "name": "plugin-template",
+  "name": "plugin-hex",
   "build": {
     "context": ".",
     "dockerfile": "Dockerfile"
   },
-  "workspaceFolder": "/workspaces/plugin-template",
+  "workspaceFolder": "/workspaces/plugin-hex",
   "forwardPorts": [8080],
   "customizations": {
     "vscode": {
