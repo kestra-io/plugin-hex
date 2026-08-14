@@ -39,14 +39,15 @@
 
 ## Why
 
-- What user problem does this solve? Teams need a concrete starting point for building and validating new Kestra plugins without recreating the same project scaffolding from scratch.
-- Why would a team adopt this plugin in a workflow? It gives plugin authors a ready-made reference repo they can adapt alongside their own build, test, and publishing workflow.
-- What operational/business outcome does it enable? It shortens plugin delivery time, reduces setup mistakes, and makes internal or partner plugin development more repeatable.
+- What user problem does this solve? Teams that build dashboards and apps in [Hex](https://hex.tech) need a way to run a Hex project from a Kestra flow and know when it finishes, without hand-rolling HTTP calls against the Hex API.
+- Why would a team adopt this plugin in a workflow? It lets a Kestra flow kick off a Hex project run and wait for it inline, or react whenever a Hex project's run (started from Kestra or elsewhere) completes.
+- What operational/business outcome does it enable? Hex refreshes become an orchestrated step in a larger pipeline (e.g. run ingestion, then refresh a Hex dashboard, then notify), instead of a disconnected, manually-triggered job.
 
 ## What
 
-- Provides plugin components under `io.kestra.plugin.hex`.
-- Includes classes such as `Example`, `Trigger`.
+- Provides plugin components under `io.kestra.plugin.hex.projects`.
+- Includes `Run`, a task that starts the latest published version of a Hex project and, by default, waits for it to complete.
+- Includes `Trigger`, a polling trigger that fires a flow execution when a Hex project's most recent run reaches `COMPLETED`.
 
 ## Running Kestra locally with this plugin
 

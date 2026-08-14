@@ -1,0 +1,8 @@
+group: io.kestra.plugin.hex.projects
+name: "projects"
+title: "Hex Projects"
+description: "Run a Hex project and react when a run completes."
+body: "Start the latest published version of a Hex project and optionally wait for completion, or trigger a flow when a project's most recent run reaches COMPLETED. Requires an `apiToken` (Hex API key) and a `projectId`; override `baseUrl` only for a self-hosted Hex region."
+videos: []
+createdBy: "Kestra Core Team"
+managedBy: "Kestra Core Team"
