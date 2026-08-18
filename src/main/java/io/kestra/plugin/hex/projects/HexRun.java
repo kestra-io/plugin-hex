@@ -21,6 +21,11 @@ record HexRun(
     Double elapsedTime,
     String traceId
 ) {
+    // Normalizes a missing status to UNKNOWN so status() is never null (UNKNOWN is already non-terminal).
+    HexRun {
+        status = status != null ? status : RunStatus.UNKNOWN;
+    }
+
     // Hex reports elapsedTime in milliseconds. Falls back to startTime/endTime when absent.
     Duration elapsedDuration() {
         if (elapsedTime != null) {

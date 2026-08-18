@@ -113,12 +113,7 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
         var kv = runContext.namespaceKv(context.getNamespace());
         var kvKey = kvKey(context.getFlowId(), context.getTriggerId());
 
-        String lastFiredRunId = null;
-        try {
-            lastFiredRunId = kv.getValue(kvKey).map(value -> (String) value.value()).orElse(null);
-        } catch (Exception e) {
-            logger.debug("No previous trigger state found for project '{}', treating as first evaluation", rProjectId);
-        }
+        String lastFiredRunId = kv.getValue(kvKey).map(value -> (String) value.value()).orElse(null);
 
         // Filter to COMPLETED server-side so a newer in-flight run cannot mask a just-completed one.
         Optional<HexRun> latestRun;

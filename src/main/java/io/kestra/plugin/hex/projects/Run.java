@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.slf4j.Logger;
 
+import io.kestra.core.exceptions.ResourceExpiredException;
 import io.kestra.core.models.annotations.Example;
 import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.models.annotations.PluginProperty;
@@ -183,6 +184,10 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
 
         String finalRunId = runId;
         killable.set(() -> cancelQuietly(runContext, rProjectId, finalRunId, logger));
+        // kill() may have already flipped isKilled while killable was still null (race above); catch up now.
+        if (isKilled.get()) {
+            cancelQuietly(runContext, rProjectId, finalRunId, logger);
+        }
 
         var currentRun = this.getRun(runContext, rProjectId, runId);
         AtomicReference<HexRun> lastSeen = new AtomicReference<>(currentRun);
@@ -237,15 +242,11 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
     }
 
     // The KV key is the task run ID: stable across retries of the same task run, unique per execution.
-    private String existingRunId(RunContext runContext) {
-        try {
-            return runContext.namespaceKv(runContext.flowInfo().namespace())
-                .getValue(kvKey(runContext))
-                .map(value -> (String) value.value())
-                .orElse(null);
-        } catch (Exception e) {
-            return null;
-        }
+    private String existingRunId(RunContext runContext) throws IOException, ResourceExpiredException {
+        return runContext.namespaceKv(runContext.flowInfo().namespace())
+            .getValue(kvKey(runContext))
+            .map(value -> (String) value.value())
+            .orElse(null);
     }
 
     private void storeRunId(RunContext runContext, String runId, Duration ttl) throws IOException {

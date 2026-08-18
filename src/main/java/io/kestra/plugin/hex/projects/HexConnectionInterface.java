@@ -78,7 +78,8 @@ interface HexConnectionInterface {
     }
 
     private String baseUrl(RunContext runContext) throws IllegalVariableEvaluationException {
-        return runContext.render(this.getBaseUrl()).as(String.class).orElse(DEFAULT_BASE_URL);
+        var rBaseUrl = runContext.render(this.getBaseUrl()).as(String.class).orElse(DEFAULT_BASE_URL);
+        return rBaseUrl.endsWith("/") ? rBaseUrl.substring(0, rBaseUrl.length() - 1) : rBaseUrl;
     }
 
     private HttpResponse<String> request(RunContext runContext, HttpRequest.HttpRequestBuilder requestBuilder)

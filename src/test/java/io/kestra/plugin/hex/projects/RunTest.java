@@ -1,6 +1,7 @@
 package io.kestra.plugin.hex.projects;
 
 import java.time.Duration;
+import java.util.Map;
 import java.util.concurrent.TimeoutException;
 
 import org.junit.jupiter.api.Test;
@@ -22,7 +23,9 @@ import jakarta.inject.Inject;
 import jakarta.validation.ConstraintViolationException;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.delete;
 import static com.github.tomakehurst.wiremock.client.WireMock.deleteRequestedFor;
+import static com.github.tomakehurst.wiremock.client.WireMock.equalToJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.exactly;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
@@ -200,7 +203,7 @@ class RunTest {
                 .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(statusBody(projectId, runId, "RUNNING", null, null)))
         );
         stubFor(
-            com.github.tomakehurst.wiremock.client.WireMock.delete(urlEqualTo("/projects/" + projectId + "/runs/" + runId))
+            delete(urlEqualTo("/projects/" + projectId + "/runs/" + runId))
                 .willReturn(aResponse().withStatus(200))
         );
 
@@ -232,6 +235,52 @@ class RunTest {
         // Run's own orElseThrow() ever runs, so a missing value surfaces as a ConstraintViolationException.
         ConstraintViolationException thrown = assertThrows(ConstraintViolationException.class, () -> task.run(runContext(task)));
         assertThat(thrown.getMessage(), containsString("projectId"));
+    }
+
+    @Test
+    void sendsInputParamsInTheStartRequestBody(WireMockRuntimeInfo wm) throws Exception {
+        String projectId = "proj-" + IdUtils.create();
+        String runId = "run-" + IdUtils.create();
+
+        stubFor(
+            post(urlEqualTo("/projects/" + projectId + "/runs"))
+                .withRequestBody(equalToJson("{\"inputParams\": {\"run_date\": \"2026-01-01\"}}"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(startBody(projectId, runId)))
+        );
+        stubFor(
+            get(urlEqualTo("/projects/" + projectId + "/runs/" + runId))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(statusBody(projectId, runId, "RUNNING", null, null)))
+        );
+
+        Run task = Run.builder()
+            .id(IdUtils.create())
+            .type(Run.class.getName())
+            .apiToken(Property.ofValue("dummy-token"))
+            .baseUrl(Property.ofValue(wm.getHttpBaseUrl()))
+            .projectId(Property.ofValue(projectId))
+            .inputParams(Property.ofValue(Map.of("run_date", "2026-01-01")))
+            .wait(Property.ofValue(false))
+            .build();
+
+        task.run(runContext(task));
+
+        verify(exactly(1), postRequestedFor(urlEqualTo("/projects/" + projectId + "/runs"))
+            .withRequestBody(equalToJson("{\"inputParams\": {\"run_date\": \"2026-01-01\"}}")));
+    }
+
+    @Test
+    void failsClearlyWhenPollFrequencyIsNotPositive(WireMockRuntimeInfo wm) {
+        Run task = Run.builder()
+            .id(IdUtils.create())
+            .type(Run.class.getName())
+            .apiToken(Property.ofValue("dummy-token"))
+            .baseUrl(Property.ofValue(wm.getHttpBaseUrl()))
+            .projectId(Property.ofValue("proj-" + IdUtils.create()))
+            .pollFrequency(Property.ofValue(Duration.ZERO))
+            .build();
+
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class, () -> task.run(runContext(task)));
+        assertThat(thrown.getMessage(), containsString("pollFrequency"));
     }
 
     @Test

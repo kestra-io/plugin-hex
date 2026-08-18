@@ -24,10 +24,10 @@ Hex exposes a REST API only; there is no official Java SDK. All HTTP calls go th
 ### Key Plugin Classes
 
 - `io.kestra.plugin.hex.projects.Run`: `RunnableTask<Run.Output>`. Starts the latest published version of a project (`POST /projects/{projectId}/runs`) and, when `wait` is true (default), polls `GET /projects/{projectId}/runs/{runId}` until a terminal status. Reattaches to an already in-flight run instead of starting a duplicate (see Reattach below), and cancels the run via `DELETE` on `kill()`.
-- `io.kestra.plugin.hex.projects.Trigger`: `AbstractTrigger` + `PollingTriggerInterface` + `TriggerOutput<Run.Output>`. Polls `GET /projects/{projectId}/runs?limit=1` and fires once the most recent run reaches `COMPLETED`, deduplicating on run ID.
-- `io.kestra.plugin.hex.projects.HexClient`: package-private static HTTP helper shared by both, since a `Task` and a `Trigger` cannot share a common superclass. Wraps request/response handling, JSON parsing, and translates non-2xx responses into actionable messages.
-- `io.kestra.plugin.hex.projects.HexRuns`: shared status classification (`COMPLETED`/`ERRORED`/`KILLED`/`UNABLE_TO_ALLOCATE_KERNEL`) and `Run.Output` mapping used by both `Run` and `Trigger`.
-- `io.kestra.plugin.hex.projects.HexRunResponse` / `HexRunStatusResponse` / `HexRunListResponse`: response DTOs for the start, get-status, and list-runs endpoints, respectively.
+- `io.kestra.plugin.hex.projects.Trigger`: `AbstractTrigger` + `PollingTriggerInterface` + `TriggerOutput<Run.Output>`. Polls `GET /projects/{projectId}/runs?limit=1&statusFilter=COMPLETED` and fires once the most recent run reaches `COMPLETED`, deduplicating on run ID.
+- `io.kestra.plugin.hex.projects.HexConnectionInterface`: shared Hex API calls (start, get, list, cancel a run) as default methods, since a `Task` and a `Trigger` cannot share a common superclass. Implementors only expose `getApiToken()` and `getBaseUrl()`. Also holds the nested `HexRunList` record for the list-runs response and translates non-2xx responses into actionable messages.
+- `io.kestra.plugin.hex.projects.RunStatus`: enum of Hex run statuses (`PENDING`/`RUNNING`/`ERRORED`/`COMPLETED`/`KILLED`/`UNABLE_TO_ALLOCATE_KERNEL`/`UNKNOWN`), with `isTerminal()`/`isFailure()` classification used by both `Run` and `Trigger`.
+- `io.kestra.plugin.hex.projects.HexRun`: record for a single Hex run, used for both the start response and the status/list response, and mapped into `Run.Output` by both `Run` and `Trigger`.
 
 ### Reattach contract (Run)
 
