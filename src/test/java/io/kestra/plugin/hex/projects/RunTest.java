@@ -284,6 +284,22 @@ class RunTest {
     }
 
     @Test
+    void failsClearlyWhenPollFrequencyExceedsMaxDuration(WireMockRuntimeInfo wm) {
+        Run task = Run.builder()
+            .id(IdUtils.create())
+            .type(Run.class.getName())
+            .apiToken(Property.ofValue("dummy-token"))
+            .baseUrl(Property.ofValue(wm.getHttpBaseUrl()))
+            .projectId(Property.ofValue("proj-" + IdUtils.create()))
+            .pollFrequency(Property.ofValue(Duration.ofSeconds(30)))
+            .maxDuration(Property.ofValue(Duration.ofSeconds(10)))
+            .build();
+
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class, () -> task.run(runContext(task)));
+        assertThat(thrown.getMessage(), containsString("maxDuration"));
+    }
+
+    @Test
     void throwsTimeoutNamingLastObservedStatus(WireMockRuntimeInfo wm) throws Exception {
         String projectId = "proj-" + IdUtils.create();
         String runId = "run-" + IdUtils.create();
