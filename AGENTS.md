@@ -2,14 +2,14 @@
 
 ## What
 
-- Provides plugin components under `io.kestra.plugin.hex`.
-- Includes classes such as `Example`, `Trigger`.
+- Provides plugin components under `io.kestra.plugin.hex.projects`.
+- Includes `Run` (a `RunnableTask` that starts a Hex project run and, by default, waits for completion) and `Trigger` (a polling trigger that fires when a Hex project's most recent run completes).
 
 ## Why
 
-- What user problem does this solve? Teams need a concrete starting point for building and validating new Kestra plugins without recreating the same project scaffolding from scratch.
-- Why would a team adopt this plugin in a workflow? It gives plugin authors a ready-made reference repo they can adapt alongside their own build, test, and publishing workflow.
-- What operational/business outcome does it enable? It shortens plugin delivery time, reduces setup mistakes, and makes internal or partner plugin development more repeatable.
+- What user problem does this solve? Hex (hex.tech) ships no Java SDK, so running a Hex project from an orchestrator otherwise means hand-rolling HTTP calls against its REST API.
+- Why would a team adopt this plugin in a workflow? It lets a Kestra flow start a Hex project run and wait for it inline, or react whenever a Hex project's run reaches a terminal state, whether that run was started from Kestra or elsewhere (manually, or on a schedule configured in Hex).
+- What operational/business outcome does it enable? Hex dashboard/app refreshes become an orchestrated, observable step in a larger pipeline instead of a disconnected manual job.
 
 ## How
 
@@ -17,22 +17,28 @@
 
 Single-module plugin. Source packages under `io.kestra.plugin`:
 
-- `hex`
+- `hex.projects`
 
-Infrastructure dependencies (Docker Compose services):
-
-- `app`
+Hex exposes a REST API only; there is no official Java SDK. All HTTP calls go through Kestra's built-in `io.kestra.core.http.client.HttpClient`, never a third-party dependency.
 
 ### Key Plugin Classes
 
-- `io.kestra.plugin.hex.Example`
+- `io.kestra.plugin.hex.projects.Run`: `RunnableTask<Run.Output>`. Starts the latest published version of a project (`POST /projects/{projectId}/runs`) and, when `wait` is true (default), polls `GET /projects/{projectId}/runs/{runId}` until a terminal status. Reattaches to an already in-flight run instead of starting a duplicate (see Reattach below), and cancels the run via `DELETE` on `kill()`.
+- `io.kestra.plugin.hex.projects.Trigger`: `AbstractTrigger` + `PollingTriggerInterface` + `TriggerOutput<Run.Output>`. Polls `GET /projects/{projectId}/runs?limit=1&statusFilter=COMPLETED` and fires once the most recent run reaches `COMPLETED`, deduplicating on run ID.
+- `io.kestra.plugin.hex.projects.HexConnectionInterface`: shared Hex API calls (start, get, list, cancel a run) as default methods, since a `Task` and a `Trigger` cannot share a common superclass. Implementors only expose `getApiToken()` and `getBaseUrl()`. Also holds the nested `HexRunList` record for the list-runs response and translates non-2xx responses into actionable messages.
+- `io.kestra.plugin.hex.projects.RunStatus`: enum of Hex run statuses (`PENDING`/`RUNNING`/`ERRORED`/`COMPLETED`/`KILLED`/`UNABLE_TO_ALLOCATE_KERNEL`/`UNKNOWN`), with `isTerminal()`/`isFailure()` classification used by both `Run` and `Trigger`.
+- `io.kestra.plugin.hex.projects.HexRun`: record for a single Hex run, used for both the start response and the status/list response, and mapped into `Run.Output` by both `Run` and `Trigger`.
+
+### Reattach contract (Run)
+
+`RunContext.stateStore()` is deprecated for removal as of Kestra 1.1.0, so `Run` does not use it. Instead it persists the Hex run ID directly to the flow's namespace KV store (`runContext.namespaceKv(runContext.flowInfo().namespace())`), keyed by `runContext.taskRunInfo().taskRunId()` (stable across attempts of the same task run, unique per execution, so concurrent executions of the same flow never collide). On `run()`, it looks up that key before deciding whether to call the start endpoint; if a run ID is already present, it reattaches to that run's status instead of starting a duplicate. The entry is cleared once the run reaches a terminal state, and expires on its own via a TTL equal to `maxDuration` if it never does.
 
 ### Project Structure
 
 ```
 plugin-hex/
-├── src/main/java/io/kestra/plugin/hex/
-├── src/test/java/io/kestra/plugin/hex/
+├── src/main/java/io/kestra/plugin/hex/projects/
+├── src/test/java/io/kestra/plugin/hex/projects/
 ├── build.gradle
 └── README.md
 ```
@@ -45,3 +51,4 @@ plugin-hex/
 
 - https://kestra.io/docs/plugin-developer-guide
 - https://kestra.io/docs/plugin-developer-guide/contribution-guidelines
+- https://learn.hex.tech/docs/api/api-reference
