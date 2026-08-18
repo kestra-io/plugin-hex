@@ -40,7 +40,7 @@ interface HexConnectionInterface {
     default HexRun startRun(RunContext runContext, String projectId, Map<String, Object> inputParams)
         throws IOException, IllegalVariableEvaluationException, HttpClientException {
         var requestBuilder = HttpRequest.builder()
-            .uri(URI.create(rBaseUrl(runContext) + "/projects/" + encode(projectId) + "/runs"))
+            .uri(URI.create(baseUrl(runContext) + "/projects/" + encode(projectId) + "/runs"))
             .method("POST")
             .body(
                 HttpRequest.JsonRequestBody.builder()
@@ -54,7 +54,7 @@ interface HexConnectionInterface {
     default HexRun getRun(RunContext runContext, String projectId, String runId)
         throws IOException, IllegalVariableEvaluationException, HttpClientException {
         var requestBuilder = HttpRequest.builder()
-            .uri(URI.create(rBaseUrl(runContext) + "/projects/" + encode(projectId) + "/runs/" + encode(runId)))
+            .uri(URI.create(baseUrl(runContext) + "/projects/" + encode(projectId) + "/runs/" + encode(runId)))
             .method("GET");
 
         return parse(request(runContext, requestBuilder), HexRun.class, "get the status of run '" + runId + "'");
@@ -63,7 +63,7 @@ interface HexConnectionInterface {
     default Optional<HexRun> latestCompletedRun(RunContext runContext, String projectId)
         throws IOException, IllegalVariableEvaluationException, HttpClientException {
         var requestBuilder = HttpRequest.builder()
-            .uri(URI.create(rBaseUrl(runContext) + "/projects/" + encode(projectId) + "/runs?limit=1&statusFilter=COMPLETED"))
+            .uri(URI.create(baseUrl(runContext) + "/projects/" + encode(projectId) + "/runs?limit=1&statusFilter=COMPLETED"))
             .method("GET");
 
         var list = parse(request(runContext, requestBuilder), HexRunList.class, "list recent runs for project '" + projectId + "'");
@@ -73,13 +73,13 @@ interface HexConnectionInterface {
     default void cancelRun(RunContext runContext, String projectId, String runId)
         throws IOException, IllegalVariableEvaluationException, HttpClientException {
         var requestBuilder = HttpRequest.builder()
-            .uri(URI.create(rBaseUrl(runContext) + "/projects/" + encode(projectId) + "/runs/" + encode(runId)))
+            .uri(URI.create(baseUrl(runContext) + "/projects/" + encode(projectId) + "/runs/" + encode(runId)))
             .method("DELETE");
 
         request(runContext, requestBuilder);
     }
 
-    private String rBaseUrl(RunContext runContext) throws IllegalVariableEvaluationException {
+    private String baseUrl(RunContext runContext) throws IllegalVariableEvaluationException {
         return runContext.render(this.getBaseUrl()).as(String.class).orElse(DEFAULT_BASE_URL);
     }
 

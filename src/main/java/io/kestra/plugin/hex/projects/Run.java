@@ -172,19 +172,17 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
         }
         var rInputParams = runContext.render(this.inputParams).asMap(String.class, Object.class);
 
-        String runId = tryReattach(runContext);
-        HexRun startedRun = null;
+        String runId = existingRunId(runContext);
         if (runId == null) {
-            startedRun = this.startRun(runContext, rProjectId, rInputParams);
-            runId = startedRun.runId();
-            persistRunId(runContext, runId, rMaxDuration);
+            runId = this.startRun(runContext, rProjectId, rInputParams).runId();
+            storeRunId(runContext, runId, rMaxDuration);
             logger.info("Started Hex run '{}' for project '{}'", runId, rProjectId);
         } else {
             logger.info("Reattaching to existing Hex run '{}' for project '{}' instead of starting a new one", runId, rProjectId);
         }
 
         String finalRunId = runId;
-        killable.set(() -> safelyCancel(runContext, rProjectId, finalRunId, logger));
+        killable.set(() -> cancelQuietly(runContext, rProjectId, finalRunId, logger));
 
         var currentRun = this.getRun(runContext, rProjectId, runId);
         AtomicReference<HexRun> lastSeen = new AtomicReference<>(currentRun);
@@ -209,7 +207,7 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
         }
 
         if (currentRun.status().isTerminal()) {
-            clearReattachState(runContext);
+            clearRunId(runContext);
         }
 
         if (currentRun.status().isFailure()) {
@@ -219,7 +217,7 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
             );
         }
 
-        return Output.of(merge(runId, startedRun, currentRun));
+        return Output.of(runId, currentRun);
     }
 
     @Override
@@ -229,7 +227,7 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
         }
     }
 
-    private void safelyCancel(RunContext runContext, String rProjectId, String runId, Logger logger) {
+    private void cancelQuietly(RunContext runContext, String rProjectId, String runId, Logger logger) {
         try {
             this.cancelRun(runContext, rProjectId, runId);
             logger.info("Cancelled Hex run '{}' for project '{}'", runId, rProjectId);
@@ -238,32 +236,14 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
         }
     }
 
-    // The start response and the status response overlap; prefers the status response's fields (the
-    // freshest data) and falls back to the start response only for fields a status response could
-    // theoretically omit.
-    private static HexRun merge(String runId, HexRun started, HexRun status) {
-        return new HexRun(
-            status.projectId(),
-            runId,
-            status.runUrl() != null ? status.runUrl() : (started != null ? started.runUrl() : null),
-            status.runStatusUrl(),
-            status.status(),
-            status.projectVersion() != null ? status.projectVersion() : (started != null ? started.projectVersion() : null),
-            status.startTime(),
-            status.endTime(),
-            status.elapsedTime(),
-            status.traceId() != null ? status.traceId() : (started != null ? started.traceId() : null)
-        );
-    }
-
     // Reattach is persisted to the flow's namespace KV store keyed by this specific task run ID, which is
     // stable across attempts of the same task run (e.g. after a worker crash and requeue) but unique per
     // execution, so two concurrent executions of the same flow never share or overwrite each other's run ID.
     // The task run ID alone is already a globally unique identifier, so no extra segments need delimiting.
-    private String tryReattach(RunContext runContext) {
+    private String existingRunId(RunContext runContext) {
         try {
             return runContext.namespaceKv(runContext.flowInfo().namespace())
-                .getValue(reattachKvKey(runContext))
+                .getValue(kvKey(runContext))
                 .map(value -> (String) value.value())
                 .orElse(null);
         } catch (Exception e) {
@@ -271,20 +251,20 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
         }
     }
 
-    private void persistRunId(RunContext runContext, String runId, Duration ttl) throws IOException {
+    private void storeRunId(RunContext runContext, String runId, Duration ttl) throws IOException {
         runContext.namespaceKv(runContext.flowInfo().namespace())
-            .put(reattachKvKey(runContext), new KVValueAndMetadata(new KVMetadata(null, ttl), runId));
+            .put(kvKey(runContext), new KVValueAndMetadata(new KVMetadata(null, ttl), runId));
     }
 
-    private void clearReattachState(RunContext runContext) {
+    private void clearRunId(RunContext runContext) {
         try {
-            runContext.namespaceKv(runContext.flowInfo().namespace()).delete(reattachKvKey(runContext));
+            runContext.namespaceKv(runContext.flowInfo().namespace()).delete(kvKey(runContext));
         } catch (Exception e) {
             runContext.logger().debug("Could not clear Hex run reattach state: {}", e.getMessage());
         }
     }
 
-    private static String reattachKvKey(RunContext runContext) {
+    private static String kvKey(RunContext runContext) {
         return REATTACH_KV_PREFIX + runContext.taskRunInfo().taskRunId();
     }
 
@@ -321,9 +301,9 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
         @Schema(title = "Trace ID", description = "Identifier Hex uses to correlate this run internally, useful when contacting Hex support.")
         private final String traceId;
 
-        static Output of(HexRun run) {
+        static Output of(String runId, HexRun run) {
             return Output.builder()
-                .runId(run.runId())
+                .runId(runId)
                 .runUrl(run.runUrl())
                 .status(run.status() != null ? run.status().name() : null)
                 .projectVersion(run.projectVersion())

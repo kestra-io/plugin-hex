@@ -112,7 +112,7 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
             .orElseThrow(() -> new IllegalArgumentException("projectId must be set"));
 
         var kv = runContext.namespaceKv(context.getNamespace());
-        var kvKey = watermarkKvKey(context.getFlowId(), context.getTriggerId());
+        var kvKey = kvKey(context.getFlowId(), context.getTriggerId());
 
         String lastFiredRunId = null;
         try {
@@ -155,13 +155,13 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
         kv.put(kvKey, new KVValueAndMetadata(new KVMetadata(null, WATERMARK_TTL), latest.runId()));
 
         logger.info("Hex run '{}' for project '{}' completed, firing trigger", latest.runId(), rProjectId);
-        var output = Run.Output.of(latest);
+        var output = Run.Output.of(latest.runId(), latest);
         return Optional.of(TriggerService.generateExecution(this, conditionContext, context, output));
     }
 
     // Length-prefixes each segment so a flowId/triggerId pair such as ("ab", "c") never collides with
     // ("a", "bc") onto the same KV key; namespaceKv() is shared across every flow in the namespace.
-    private static String watermarkKvKey(String flowId, String triggerId) {
+    private static String kvKey(String flowId, String triggerId) {
         return WATERMARK_KV_PREFIX + flowId.length() + "_" + flowId + "_" + triggerId;
     }
 }
