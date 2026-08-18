@@ -68,8 +68,7 @@ import lombok.experimental.SuperBuilder;
 )
 public class Trigger extends AbstractTrigger implements PollingTriggerInterface, TriggerOutput<Run.Output>, HexConnectionInterface {
     private static final String WATERMARK_KV_PREFIX = "hex_trigger_last_completed_run_";
-    // Only needs to survive long enough to prevent a re-fire across scheduler restarts; not tied to any
-    // user-configurable duration, so a generous fixed value keeps the KV store from growing unbounded.
+    // Long enough to prevent a re-fire across scheduler restarts, short enough to expire on its own.
     private static final Duration WATERMARK_TTL = Duration.ofDays(30);
 
     @Schema(title = "Hex project ID", description = "The ID of the Hex project to monitor.")
@@ -121,11 +120,7 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
             logger.debug("No previous trigger state found for project '{}', treating as first evaluation", rProjectId);
         }
 
-        // Filter to COMPLETED runs server-side rather than fetching the single newest run of any status:
-        // a busy project can start a fresh run before the poll catches a just-completed one, and an
-        // unfiltered limit=1 would return the newer in-flight run and silently miss the completion.
-        // Ordering is assumed most-recent-first (Hex documents no sort parameter), so limit=1 yields the
-        // latest completed run.
+        // Filter to COMPLETED server-side so a newer in-flight run cannot mask a just-completed one.
         Optional<HexRun> latestRun;
         try {
             latestRun = this.latestCompletedRun(runContext, rProjectId);
@@ -140,8 +135,7 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
         }
 
         var latest = latestRun.get();
-        // Defensive: statusFilter should guarantee this, but do not fire on anything non-terminal if the
-        // API ever returns a broader set.
+        // Defensive: statusFilter should already guarantee this.
         if (latest.status() != RunStatus.COMPLETED) {
             logger.debug("Latest Hex run '{}' for project '{}' is not completed, status={}", latest.runId(), rProjectId, latest.status());
             return Optional.empty();
@@ -159,8 +153,7 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
         return Optional.of(TriggerService.generateExecution(this, conditionContext, context, output));
     }
 
-    // Length-prefixes each segment so a flowId/triggerId pair such as ("ab", "c") never collides with
-    // ("a", "bc") onto the same KV key; namespaceKv() is shared across every flow in the namespace.
+    // Length-prefixes flowId so ("ab","c") and ("a","bc") cannot collide on one KV key.
     private static String kvKey(String flowId, String triggerId) {
         return WATERMARK_KV_PREFIX + flowId.length() + "_" + flowId + "_" + triggerId;
     }

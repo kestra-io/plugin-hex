@@ -24,13 +24,8 @@ import io.kestra.core.runners.RunContext;
 import io.kestra.core.serializers.JacksonMapper;
 
 /**
- * Hex REST API connection shared by {@link Run} and {@link Trigger}. Hex ships no Java SDK, so every
- * call goes through Kestra's own HTTP client rather than a third-party dependency.
- *
- * A task and a trigger cannot share a superclass (one extends Task, the other AbstractTrigger), so
- * this interface carries the connection behaviour as default methods instead: both implementors only
- * need to expose {@link #getApiToken()} and {@link #getBaseUrl()}, which their existing Lombok
- * {@code @Getter} already provides.
+ * Hex REST API calls shared by {@link Run} and {@link Trigger} as default methods, since the two cannot
+ * share a superclass. Implementors only expose {@link #getApiToken()} and {@link #getBaseUrl()}.
  */
 interface HexConnectionInterface {
     String DEFAULT_BASE_URL = "https://app.hex.tech/api/v1";
@@ -103,9 +98,7 @@ interface HexConnectionInterface {
         }
     }
 
-    // Surfaces Hex's own error message rather than a bare status code or hardcoded guess. Hex's body is
-    // usually the most precise explanation ("This project has not been published" on a 422, "Invalid
-    // project ID" on a 400), so there is nothing to add on top of it.
+    // Surfaces Hex's own error message rather than a bare status code.
     private static HttpClientResponseException translate(HttpClientResponseException e) {
         int code = e.getResponse().getStatus().getCode();
         String message = hexMessage(e.getResponse().getBody());
@@ -113,15 +106,13 @@ interface HexConnectionInterface {
         return new HttpClientResponseException("Hex API call failed with status " + code + ": " + detail, e.getResponse(), e);
     }
 
-    // Pulls the reason out of Hex's error body: the structured JSON envelope ({"message", "issues"}) when
-    // present, otherwise the raw body text (for example the plain "Unauthorized" on an auth failure).
-    // Returns null only for a missing or blank body, and caps the length so an unexpected large body
-    // cannot bloat the error.
+    // Reads the reason from Hex's error body: the JSON envelope ({"message", "issues"}) if present, else the
+    // raw text (for example a plain "Unauthorized"). Null for an empty body, capped so a large body cannot bloat it.
     private static String hexMessage(Object body) {
         if (body == null) {
             return null;
         }
-        // Error responses come back as raw bytes, so decode those rather than stringifying the array reference.
+        // Error responses come back as raw bytes, so decode rather than stringifying the array reference.
         String text = body instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : body.toString();
         if (text.isBlank()) {
             return null;
@@ -161,8 +152,7 @@ interface HexConnectionInterface {
         return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
-    // Response body of GET /projects/{projectId}/runs. Hex wraps the run objects in a "runs" array
-    // (alongside pagination cursors and a traceId, which are ignored here).
+    // Response body of GET /projects/{projectId}/runs, which wraps the runs in a "runs" array.
     @JsonIgnoreProperties(ignoreUnknown = true)
     record HexRunList(List<HexRun> runs) {
     }

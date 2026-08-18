@@ -5,11 +5,7 @@ import java.time.Instant;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
-/**
- * A single Hex run, covering both the start response ({@code POST /projects/{id}/runs}) and the
- * status/list response ({@code GET .../runs} and {@code .../runs/{runId}}): their fields overlap enough
- * to share one shape, with fields a given response does not carry simply left null.
- */
+/** A single Hex run, used for both the start response and the status/list response. */
 @JsonIgnoreProperties(ignoreUnknown = true)
 record HexRun(
     String projectId,
@@ -23,8 +19,7 @@ record HexRun(
     Double elapsedTime,
     String traceId
 ) {
-    // Hex reports elapsedTime in milliseconds (verified against a real run: elapsedTime 16952 matched a
-    // 16.952s startTime/endTime delta). Falls back to computing it from startTime/endTime when absent.
+    // Hex reports elapsedTime in milliseconds. Falls back to startTime/endTime when absent.
     Duration elapsedDuration() {
         if (elapsedTime != null) {
             return Duration.ofMillis(Math.round(elapsedTime));

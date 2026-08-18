@@ -236,10 +236,7 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
         }
     }
 
-    // Reattach is persisted to the flow's namespace KV store keyed by this specific task run ID, which is
-    // stable across attempts of the same task run (e.g. after a worker crash and requeue) but unique per
-    // execution, so two concurrent executions of the same flow never share or overwrite each other's run ID.
-    // The task run ID alone is already a globally unique identifier, so no extra segments need delimiting.
+    // The KV key is the task run ID: stable across retries of the same task run, unique per execution.
     private String existingRunId(RunContext runContext) {
         try {
             return runContext.namespaceKv(runContext.flowInfo().namespace())

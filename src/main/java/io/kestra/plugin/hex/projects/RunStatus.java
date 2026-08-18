@@ -4,11 +4,7 @@ import java.util.Set;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 
-/**
- * Status of a Hex run. Unrecognized values map to UNKNOWN rather than failing deserialization, so a
- * status Hex adds in the future only leaves that run classified as non-terminal until a recognized
- * status is observed.
- */
+/** Status of a Hex run. Unrecognized values map to {@link #UNKNOWN} rather than failing deserialization. */
 enum RunStatus {
     PENDING,
     RUNNING,
