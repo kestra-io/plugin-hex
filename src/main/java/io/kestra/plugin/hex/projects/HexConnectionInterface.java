@@ -4,9 +4,11 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import io.kestra.core.exceptions.IllegalVariableEvaluationException;
@@ -163,5 +165,11 @@ interface HexConnectionInterface {
 
     private static String encode(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
+    // Response body of GET /projects/{projectId}/runs. Hex wraps the run objects in a "runs" array
+    // (alongside pagination cursors and a traceId, which are ignored here).
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record HexRunList(List<HexRun> runs) {
     }
 }
