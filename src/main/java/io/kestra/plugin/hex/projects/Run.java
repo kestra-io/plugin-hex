@@ -154,6 +154,11 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
     @ToString.Exclude
     private final transient AtomicBoolean isKilled = new AtomicBoolean(false);
 
+    @Getter(AccessLevel.NONE)
+    @EqualsAndHashCode.Exclude
+    @ToString.Exclude
+    private final transient AtomicBoolean cancelled = new AtomicBoolean(false);
+
     @Override
     public Run.Output run(RunContext runContext) throws Exception {
         Logger logger = runContext.logger();
@@ -233,6 +238,9 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
     }
 
     private void cancelQuietly(RunContext runContext, String rProjectId, String runId, Logger logger) {
+        if (!cancelled.compareAndSet(false, true)) {
+            return;
+        }
         try {
             this.cancelRun(runContext, rProjectId, runId);
             logger.info("Cancelled Hex run '{}' for project '{}'", runId, rProjectId);

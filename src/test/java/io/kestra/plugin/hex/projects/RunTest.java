@@ -329,7 +329,7 @@ class RunTest {
     }
 
     private RunContext runContext(Run task) {
-        return TestsUtils.mockRunContext(this.runContextFactory, task, java.util.Map.of());
+        return TestsUtils.mockRunContext(this.runContextFactory, task, Map.of());
     }
 
     private static String startBody(String projectId, String runId) {

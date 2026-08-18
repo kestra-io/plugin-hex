@@ -108,8 +108,7 @@ interface HexConnectionInterface {
         return new HttpClientResponseException("Hex API call failed with status " + code + ": " + detail, e.getResponse(), e);
     }
 
-    // Reads the reason from Hex's error body: the JSON envelope's message if present, else the raw text
-    // (for example a plain "Unauthorized"). Null for an empty body, capped so a large body cannot bloat it.
+    // Falls back to the raw body (for example a plain "Unauthorized") when it is not Hex's JSON envelope.
     private static String hexMessage(Object body) {
         if (body == null) {
             return null;
