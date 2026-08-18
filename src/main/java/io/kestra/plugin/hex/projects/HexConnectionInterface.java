@@ -103,30 +103,21 @@ interface HexConnectionInterface {
         }
     }
 
-    // Translates a bare HTTP status into a message naming the likely cause and the fix, instead of
-    // surfacing Hex's raw status code to the flow author. When Hex returns a structured error body its
-    // own message is preferred, since it is usually more precise than any generic hint (for example
-    // "This project has not been published" on a 422, or "Invalid project ID" on a 400).
+    // Surfaces Hex's own error message rather than a bare status code or hardcoded guess. Hex's body is
+    // usually the most precise explanation ("This project has not been published" on a 422, "Invalid
+    // project ID" on a 400), so there is nothing to add on top of it.
     private static HttpClientResponseException translate(HttpClientResponseException e) {
         int code = e.getResponse().getStatus().getCode();
-        String hint = switch (code) {
-            case 400 -> "check the request inputs, most often projectId or inputParams";
-            case 401, 403 -> "check that apiToken is a valid Hex API key with access to this project";
-            case 404 -> "check that projectId (and, for a run, the runId) is correct";
-            case 422 -> "the project must be published in Hex before it can be run via the API";
-            case 429 -> "the Hex API rate limit was hit, consider increasing pollFrequency";
-            default -> "unexpected response from the Hex API";
-        };
-
-        String hexMessage = extractHexMessage(e.getResponse().getBody());
-        String detail = hexMessage != null ? hexMessage + " (" + hint + ")" : hint;
+        String message = hexMessage(e.getResponse().getBody());
+        String detail = message != null ? message : "the Hex API returned an unexpected response";
         return new HttpClientResponseException("Hex API call failed with status " + code + ": " + detail, e.getResponse(), e);
     }
 
-    // Pulls the human-readable reason out of Hex's JSON error envelope ({"message": ..., "issues": [...]})
-    // when present. Returns null for a missing, blank, or non-JSON body so the caller falls back to the
-    // status-based hint.
-    private static String extractHexMessage(Object body) {
+    // Pulls the reason out of Hex's error body: the structured JSON envelope ({"message", "issues"}) when
+    // present, otherwise the raw body text (for example the plain "Unauthorized" on an auth failure).
+    // Returns null only for a missing or blank body, and caps the length so an unexpected large body
+    // cannot bloat the error.
+    private static String hexMessage(Object body) {
         if (body == null) {
             return null;
         }
@@ -149,10 +140,13 @@ interface HexConnectionInterface {
                     }
                 }
             }
-            return sb.isEmpty() ? null : sb.toString();
-        } catch (Exception ex) {
-            return null;
+            if (!sb.isEmpty()) {
+                return sb.toString();
+            }
+        } catch (Exception ignored) {
+            // Not JSON, fall back to the raw body text below.
         }
+        return text.strip().length() > 500 ? text.strip().substring(0, 500) : text.strip();
     }
 
     private static <T> T parse(HttpResponse<String> response, Class<T> type, String action) throws IOException {
