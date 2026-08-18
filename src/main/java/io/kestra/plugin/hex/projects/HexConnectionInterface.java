@@ -152,7 +152,9 @@ interface HexConnectionInterface {
         return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
-    // Response body of GET /projects/{projectId}/runs, which wraps the runs in a "runs" array.
+    /**
+     * Response body of GET /projects/{projectId}/runs, which wraps the runs in a "runs" array.
+     */
     @JsonIgnoreProperties(ignoreUnknown = true)
     record HexRunList(List<HexRun> runs) {
     }

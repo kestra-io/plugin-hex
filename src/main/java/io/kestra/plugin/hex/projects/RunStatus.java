@@ -4,7 +4,9 @@ import java.util.Set;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 
-/** Status of a Hex run. Unrecognized values map to {@link #UNKNOWN} rather than failing deserialization. */
+/**
+ * Status of a Hex run. Unrecognized values map to {@link #UNKNOWN} rather than failing deserialization.
+ */
 enum RunStatus {
     PENDING,
     RUNNING,

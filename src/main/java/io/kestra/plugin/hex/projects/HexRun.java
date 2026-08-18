@@ -5,7 +5,9 @@ import java.time.Instant;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
-/** A single Hex run, used for both the start response and the status/list response. */
+/**
+ * A single Hex run, used for both the start response and the status/list response.
+ */
 @JsonIgnoreProperties(ignoreUnknown = true)
 record HexRun(
     String projectId,
