@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -106,38 +107,38 @@ interface HexConnectionInterface {
         return new HttpClientResponseException("Hex API call failed with status " + code + ": " + detail, e.getResponse(), e);
     }
 
-    // Reads the reason from Hex's error body: the JSON envelope ({"message", "issues"}) if present, else the
-    // raw text (for example a plain "Unauthorized"). Null for an empty body, capped so a large body cannot bloat it.
+    // Reads the reason from Hex's error body: the JSON envelope's message if present, else the raw text
+    // (for example a plain "Unauthorized"). Null for an empty body, capped so a large body cannot bloat it.
     private static String hexMessage(Object body) {
         if (body == null) {
             return null;
         }
         // Error responses come back as raw bytes, so decode rather than stringifying the array reference.
-        String text = body instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : body.toString();
-        if (text.isBlank()) {
+        String text = (body instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : body.toString()).strip();
+        if (text.isEmpty()) {
             return null;
         }
+        String message = jsonMessage(text).orElse(text);
+        return message.length() > 500 ? message.substring(0, 500) : message;
+    }
+
+    // Joins "message" and any "issues[].message" from Hex's JSON error envelope, or empty if the body is not that envelope.
+    private static Optional<String> jsonMessage(String text) {
         try {
             JsonNode node = JacksonMapper.ofJson().readTree(text);
-            var sb = new StringBuilder();
+            var messages = new ArrayList<String>();
             if (node.hasNonNull("message")) {
-                sb.append(node.get("message").asText());
+                messages.add(node.get("message").asText());
             }
-            JsonNode issues = node.get("issues");
-            if (issues != null && issues.isArray()) {
-                for (JsonNode issue : issues) {
-                    if (issue.hasNonNull("message")) {
-                        sb.append(sb.isEmpty() ? "" : "; ").append(issue.get("message").asText());
-                    }
+            node.path("issues").forEach(issue -> {
+                if (issue.hasNonNull("message")) {
+                    messages.add(issue.get("message").asText());
                 }
-            }
-            if (!sb.isEmpty()) {
-                return sb.toString();
-            }
-        } catch (Exception ignored) {
-            // Not JSON, fall back to the raw body text below.
+            });
+            return messages.isEmpty() ? Optional.empty() : Optional.of(String.join("; ", messages));
+        } catch (Exception e) {
+            return Optional.empty();
         }
-        return text.strip().length() > 500 ? text.strip().substring(0, 500) : text.strip();
     }
 
     private static <T> T parse(HttpResponse<String> response, Class<T> type, String action) throws IOException {
