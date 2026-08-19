@@ -1,8 +1,8 @@
 group: io.kestra.plugin.hex
 name: "hex"
 title: "Hex"
-description: "Hex plugin for Kestra"
-body: ""
+description: "Run Hex (hex.tech) notebook and app projects from Kestra and react when a run completes."
+body: "Use the `projects.Run` task to start the latest published version of a Hex project and optionally wait for it to finish, or the `projects.Trigger` to fire a flow when a project's most recent run reaches COMPLETED. Requires a Hex `apiToken` and a `projectId`; override `baseUrl` only for a self-hosted Hex region."
 videos: []
 createdBy: "Kestra Core Team"
 managedBy: "Kestra Core Team"

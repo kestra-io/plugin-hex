@@ -81,7 +81,7 @@ import static io.kestra.core.utils.Rethrow.throwSupplier;
                     apiToken: "{{ secret('HEX_API_TOKEN') }}"
                     projectId: "00000000-0000-0000-0000-000000000000"
                     inputParams:
-                      run_date: "{{ trigger.date | date('yyyy-MM-dd') }}"
+                      run_date: "{{ now() | date('yyyy-MM-dd') }}"
                     wait: false
                 """
         )
