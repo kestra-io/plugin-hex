@@ -1,6 +1,7 @@
 package io.kestra.plugin.hex.projects;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
 
@@ -187,6 +188,44 @@ class RunTest {
 
         verify(exactly(1), postRequestedFor(urlEqualTo("/projects/" + projectId + "/runs")));
         verify(exactly(2), getRequestedFor(urlEqualTo("/projects/" + projectId + "/runs/" + runId)));
+    }
+
+    @Test
+    void persistsReattachEntryWithATtlIndependentOfMaxDuration(WireMockRuntimeInfo wm) throws Exception {
+        String projectId = "proj-" + IdUtils.create();
+        String runId = "run-" + IdUtils.create();
+
+        stubFor(
+            post(urlEqualTo("/projects/" + projectId + "/runs"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(startBody(projectId, runId)))
+        );
+        stubFor(
+            get(urlEqualTo("/projects/" + projectId + "/runs/" + runId))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(statusBody(projectId, runId, "RUNNING", null, null)))
+        );
+
+        // A short maxDuration must NOT shorten the reattach entry's TTL: the retry that needs it happens
+        // after maxDuration elapses, so the entry has to outlive it (this was the bug in issue #4).
+        Run task = Run.builder()
+            .id(IdUtils.create())
+            .type(Run.class.getName())
+            .apiToken(Property.ofValue("dummy-token"))
+            .baseUrl(Property.ofValue(wm.getHttpBaseUrl()))
+            .projectId(Property.ofValue(projectId))
+            .wait(Property.ofValue(false))
+            .pollFrequency(Property.ofValue(Duration.ofSeconds(1)))
+            .maxDuration(Property.ofValue(Duration.ofSeconds(2)))
+            .build();
+
+        RunContext rc = runContext(task);
+        task.run(rc);
+
+        var entry = rc.namespaceKv(rc.flowInfo().namespace()).list().stream()
+            .filter(e -> e.key().startsWith("hex_run_reattach_"))
+            .findFirst()
+            .orElseThrow();
+
+        assertThat(entry.expirationDate().isAfter(Instant.now().plus(Duration.ofDays(1))), is(true));
     }
 
     @Test

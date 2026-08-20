@@ -89,6 +89,11 @@ import static io.kestra.core.utils.Rethrow.throwSupplier;
 )
 public class Run extends Task implements RunnableTask<Run.Output>, HexConnectionInterface {
     private static final String REATTACH_KV_PREFIX = "hex_run_reattach_";
+    // Added on top of maxDuration to size the reattach entry's TTL. The entry is refreshed on every
+    // attempt and deleted on a terminal state, so this is only a backstop: it has to outlive one attempt
+    // (hence maxDuration) plus the gap to the next retry, and refreshing carries it across the whole
+    // sequence regardless of retry interval or attempt count.
+    private static final Duration REATTACH_TTL_BUFFER = Duration.ofDays(7);
 
     @Schema(title = "Hex project ID", description = "The ID of the Hex project to run.")
     @NotNull
@@ -181,11 +186,13 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
         String runId = existingRunId(runContext);
         if (runId == null) {
             runId = this.startRun(runContext, rProjectId, rInputParams).runId();
-            storeRunId(runContext, runId, rMaxDuration);
             logger.info("Started Hex run '{}' for project '{}'", runId, rProjectId);
         } else {
             logger.info("Reattaching to existing Hex run '{}' for project '{}' instead of starting a new one", runId, rProjectId);
         }
+        // Refresh on every attempt so the entry survives the whole retry sequence, even when maxDuration
+        // itself is longer than the buffer.
+        storeRunId(runContext, runId, rMaxDuration.plus(REATTACH_TTL_BUFFER));
 
         String finalRunId = runId;
         killable.set(() -> cancelQuietly(runContext, rProjectId, finalRunId, logger));
@@ -250,11 +257,17 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
     }
 
     // The KV key is the task run ID: stable across retries of the same task run, unique per execution.
-    private String existingRunId(RunContext runContext) throws IOException, ResourceExpiredException {
-        return runContext.namespaceKv(runContext.flowInfo().namespace())
-            .getValue(kvKey(runContext))
-            .map(value -> (String) value.value())
-            .orElse(null);
+    // An expired entry means the run is no longer tracked, so start fresh; a real store failure (IOException)
+    // still propagates rather than silently starting a duplicate.
+    private String existingRunId(RunContext runContext) throws IOException {
+        try {
+            return runContext.namespaceKv(runContext.flowInfo().namespace())
+                .getValue(kvKey(runContext))
+                .map(value -> (String) value.value())
+                .orElse(null);
+        } catch (ResourceExpiredException e) {
+            return null;
+        }
     }
 
     private void storeRunId(RunContext runContext, String runId, Duration ttl) throws IOException {
