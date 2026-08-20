@@ -89,10 +89,11 @@ import static io.kestra.core.utils.Rethrow.throwSupplier;
 )
 public class Run extends Task implements RunnableTask<Run.Output>, HexConnectionInterface {
     private static final String REATTACH_KV_PREFIX = "hex_run_reattach_";
-    // The reattach entry is deleted on a terminal state, so this is only an orphan-cleanup backstop. It is
-    // a fixed value, not maxDuration: the entry must survive the whole retry sequence, which happens AFTER
-    // maxDuration elapses, and a task cannot know its own retry interval or attempt count to size it.
-    private static final Duration REATTACH_TTL = Duration.ofDays(7);
+    // Added on top of maxDuration to size the reattach entry's TTL. The entry is refreshed on every
+    // attempt and deleted on a terminal state, so this is only a backstop: it has to outlive one attempt
+    // (hence maxDuration) plus the gap to the next retry, and refreshing carries it across the whole
+    // sequence regardless of retry interval or attempt count.
+    private static final Duration REATTACH_TTL_BUFFER = Duration.ofDays(7);
 
     @Schema(title = "Hex project ID", description = "The ID of the Hex project to run.")
     @NotNull
@@ -185,11 +186,13 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
         String runId = existingRunId(runContext);
         if (runId == null) {
             runId = this.startRun(runContext, rProjectId, rInputParams).runId();
-            storeRunId(runContext, runId, REATTACH_TTL);
             logger.info("Started Hex run '{}' for project '{}'", runId, rProjectId);
         } else {
             logger.info("Reattaching to existing Hex run '{}' for project '{}' instead of starting a new one", runId, rProjectId);
         }
+        // Refresh on every attempt so the entry survives the whole retry sequence, even when maxDuration
+        // itself is longer than the buffer.
+        storeRunId(runContext, runId, rMaxDuration.plus(REATTACH_TTL_BUFFER));
 
         String finalRunId = runId;
         killable.set(() -> cancelQuietly(runContext, rProjectId, finalRunId, logger));
