@@ -86,6 +86,7 @@ class RunTest {
         Run.Output output = task.run(runContext(task));
 
         assertThat(output.getRunId(), is(runId));
+        assertThat(output.getRunUrl(), is("https://app.hex.tech/hex/" + projectId + "/run/" + runId));
         assertThat(output.getStatus(), is("COMPLETED"));
         assertThat(output.getProjectVersion(), is("3"));
         assertThat(output.getElapsedTime(), is(Duration.ofSeconds(5)));
@@ -147,6 +148,7 @@ class RunTest {
         Run.Output output = task.run(runContext(task));
 
         assertThat(output.getRunId(), is(runId));
+        assertThat(output.getRunUrl(), is("https://app.hex.tech/hex/" + projectId + "/run/" + runId));
         assertThat(output.getStatus(), is("RUNNING"));
 
         // Only the initial status snapshot is fetched, not a polling loop.

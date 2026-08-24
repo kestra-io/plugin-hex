@@ -225,6 +225,18 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
 
         if (currentRun.status().isTerminal()) {
             clearRunId(runContext);
+            var elapsed = currentRun.elapsedDuration();
+            logger.info(
+                "Hex run '{}' for project '{}' finished with status {}{}; view it in Hex: {}",
+                runId, rProjectId, currentRun.status(),
+                elapsed != null ? " in " + elapsed : "",
+                currentRun.runUrl()
+            );
+        } else {
+            logger.info(
+                "Hex run '{}' for project '{}' is {}, returning without waiting for completion; view it in Hex: {}",
+                runId, rProjectId, currentRun.status(), currentRun.runUrl()
+            );
         }
 
         if (currentRun.status().isFailure()) {
