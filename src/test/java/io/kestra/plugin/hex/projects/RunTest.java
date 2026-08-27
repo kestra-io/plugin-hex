@@ -131,7 +131,7 @@ class RunTest {
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> task.run(runContext(task)));
         assertThat(thrown.getMessage(), containsString(runId));
-        assertThat(thrown.getMessage(), containsString("ERRORED"));
+        assertThat(thrown.getMessage(), containsString("finished with status ERRORED in 5 seconds"));
     }
 
     @Test
@@ -415,41 +415,6 @@ class RunTest {
         assertThat(completion.getLevel(), is(Level.INFO));
         assertThat(completion.getMessage(), containsString("finished with status COMPLETED in 1 minute 23 seconds"));
         assertThat(completion.getMessage(), containsString("https://app.hex.tech/hex/" + projectId + "/run/" + runId));
-    }
-
-    @Test
-    void logsTheCompletionLineAtWarnWhenTheRunFails(WireMockRuntimeInfo wm) throws Exception {
-        String projectId = "proj-" + IdUtils.create();
-        String runId = "run-" + IdUtils.create();
-
-        stubFor(
-            post(urlEqualTo("/projects/" + projectId + "/runs"))
-                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(startBody(projectId, runId)))
-        );
-        stubFor(
-            get(urlEqualTo("/projects/" + projectId + "/runs/" + runId))
-                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
-                    .withBody(statusBody(projectId, runId, "ERRORED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:05Z")))
-        );
-
-        Run task = Run.builder()
-            .id(IdUtils.create())
-            .type(Run.class.getName())
-            .apiToken(Property.ofValue("dummy-token"))
-            .baseUrl(Property.ofValue(wm.getHttpBaseUrl()))
-            .projectId(Property.ofValue(projectId))
-            .build();
-
-        List<LogEntry> logs = new CopyOnWriteArrayList<>();
-        Flux<LogEntry> receive = TestsUtils.receive(logQueue, either -> logs.add(either.getLeft()));
-
-        assertThrows(IllegalStateException.class, () -> task.run(runContext(task)));
-
-        LogEntry completion = TestsUtils.awaitLog(logs, log -> log.getMessage() != null && log.getMessage().contains("finished with status"));
-        receive.blockLast();
-
-        assertThat(completion.getLevel(), is(Level.WARN));
-        assertThat(completion.getMessage(), containsString("finished with status ERRORED in 5 seconds"));
     }
 
     @Test

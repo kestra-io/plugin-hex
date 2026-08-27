@@ -226,36 +226,15 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
 
         if (currentRun.status().isTerminal()) {
             clearRunId(runContext);
-            var elapsed = currentRun.elapsedDuration();
-            var failed = currentRun.status().isFailure();
-            // Trailing placeholders are the elapsed time and the Hex link, both of which can be absent.
-            String message = "Hex run '{}' for project '{}' finished with status {}{}.{}";
-            Object[] arguments = {
-                runId, rProjectId, currentRun.status(),
-                elapsed != null ? " in " + humanDuration(elapsed) : "",
-                // The exception below carries the link for a failed run, so repeating it here would be noise.
-                failed ? "" : hexLink(currentRun.runUrl())
-            };
-            // A failed run is logged at WARN so it stands out in the log stream, right before the exception below
-            // fails the task. Anything else is routine progress.
-            if (failed) {
-                logger.warn(message, arguments);
-            } else {
-                logger.info(message, arguments);
-            }
-        } else {
-            logger.info(
-                "Hex run '{}' for project '{}' is {}, returning without waiting for completion.{}",
-                runId, rProjectId, currentRun.status(), hexLink(currentRun.runUrl())
-            );
         }
 
+        var summary = summarize(runId, rProjectId, currentRun);
         if (currentRun.status().isFailure()) {
-            throw new IllegalStateException(
-                "Hex run '" + runId + "' for project '" + rProjectId + "' ended with status " + currentRun.status()
-                    + "." + hexLink(currentRun.runUrl())
-            );
+            // Kestra logs a task exception at ERROR, so this doubles as the run's completion line.
+            throw new IllegalStateException(summary);
         }
+
+        logger.info(summary);
 
         return Output.of(runId, currentRun);
     }
@@ -310,8 +289,20 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
         return REATTACH_KV_PREFIX + runContext.taskRunInfo().taskRunId();
     }
 
+    // How a run is reported, whether it succeeded, failed, or was left running:
+    //   Hex run 'r' for project 'p' finished with status COMPLETED in 5 seconds. View it in Hex: <url>
+    //   Hex run 'r' for project 'p' is RUNNING, returning without waiting for completion. View it in Hex: <url>
+    private static String summarize(String runId, String projectId, HexRun run) {
+        var elapsed = run.elapsedDuration();
+        var outcome = run.status().isTerminal()
+            ? "finished with status " + run.status() + (elapsed != null ? " in " + humanDuration(elapsed) : "")
+            : "is " + run.status() + ", returning without waiting for completion";
+
+        return "Hex run '%s' for project '%s' %s.".formatted(runId, projectId, outcome) + hexLink(run.runUrl());
+    }
+
     // Hex returns runUrl on both the start and the status endpoints, but a missing one should read as nothing
-    // rather than "View it in Hex: null". The leading space belongs to the segment, not the caller's format string.
+    // rather than "View it in Hex: null".
     private static String hexLink(String runUrl) {
         return runUrl != null ? " View it in Hex: " + runUrl : "";
     }
