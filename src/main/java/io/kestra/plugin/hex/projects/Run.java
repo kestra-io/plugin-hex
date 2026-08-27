@@ -9,6 +9,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.apache.commons.lang3.time.DurationFormatUtils;
 import org.slf4j.Logger;
 
 import io.kestra.core.exceptions.ResourceExpiredException;
@@ -34,6 +35,7 @@ import lombok.ToString;
 import lombok.experimental.SuperBuilder;
 
 import static io.kestra.core.utils.Rethrow.throwSupplier;
+import static java.util.Objects.requireNonNullElse;
 
 @SuperBuilder
 @ToString
@@ -227,12 +229,13 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
             clearRunId(runContext);
         }
 
+        var summary = summarize(runId, rProjectId, currentRun);
         if (currentRun.status().isFailure()) {
-            throw new IllegalStateException(
-                "Hex run '" + runId + "' for project '" + rProjectId + "' ended with status " + currentRun.status()
-                    + "; see the run in Hex for details: " + currentRun.runUrl()
-            );
+            // Kestra logs a task exception at ERROR, so this is the failed run's completion line.
+            throw new IllegalStateException(summary);
         }
+
+        logger.info(summary);
 
         return Output.of(runId, currentRun);
     }
@@ -285,6 +288,29 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
 
     private static String kvKey(RunContext runContext) {
         return REATTACH_KV_PREFIX + runContext.taskRunInfo().taskRunId();
+    }
+
+    // Used for both the log line and the failure message, so a run reads the same either way.
+    private static String summarize(String runId, String projectId, HexRun run) {
+        var link = requireNonNullElse(run.runUrl(), "unavailable");
+
+        if (run.status().isTerminal()) {
+            return "Hex run '%s' for project '%s' finished with status %s in %s. View it in Hex: %s"
+                .formatted(runId, projectId, run.status(), humanDuration(run.elapsedDuration()), link);
+        }
+
+        return "Hex run '%s' for project '%s' is %s, returning without waiting for completion. View it in Hex: %s"
+            .formatted(runId, projectId, run.status(), link);
+    }
+
+    // Duration.toString() would log "PT2M3S". formatDurationWords throws below zero and rounds sub-second to "0s".
+    static String humanDuration(Duration duration) {
+        if (duration == null) {
+            return "an unknown duration";
+        }
+
+        long millis = duration.toMillis();
+        return millis < 1000 ? millis + "ms" : DurationFormatUtils.formatDurationWords(millis, true, true);
     }
 
     @Builder

@@ -51,6 +51,9 @@ dependencies {
     annotationProcessor group: "io.kestra", name: "processor", version: kestraVersion
     compileOnly group: "io.kestra", name: "core", version: kestraVersion
     compileOnly group: "io.kestra", name: "script", version: kestraVersion
+
+    // Version from the io.kestra:platform BOM. compileOnly since Kestra ships it at runtime.
+    compileOnly "org.apache.commons:commons-lang3"
 }
 
 
