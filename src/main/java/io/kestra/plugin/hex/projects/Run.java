@@ -35,6 +35,7 @@ import lombok.ToString;
 import lombok.experimental.SuperBuilder;
 
 import static io.kestra.core.utils.Rethrow.throwSupplier;
+import static java.util.Objects.requireNonNullElse;
 
 @SuperBuilder
 @ToString
@@ -291,29 +292,23 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
 
     // Used for both the log line and the failure message, so a run reads the same either way.
     private static String summarize(String runId, String projectId, HexRun run) {
-        var sentence = "Hex run '%s' for project '%s'".formatted(runId, projectId);
+        var link = requireNonNullElse(run.runUrl(), "unavailable");
 
         if (run.status().isTerminal()) {
-            sentence += " finished with status " + run.status();
-
-            var elapsed = run.elapsedDuration();
-            if (elapsed != null) {
-                sentence += " in " + humanDuration(elapsed);
-            }
-        } else {
-            sentence += " is " + run.status() + ", returning without waiting for completion";
-        }
-        sentence += ".";
-
-        if (run.runUrl() != null) {
-            sentence += " View it in Hex: " + run.runUrl();
+            return "Hex run '%s' for project '%s' finished with status %s in %s. View it in Hex: %s"
+                .formatted(runId, projectId, run.status(), humanDuration(run.elapsedDuration()), link);
         }
 
-        return sentence;
+        return "Hex run '%s' for project '%s' is %s, returning without waiting for completion. View it in Hex: %s"
+            .formatted(runId, projectId, run.status(), link);
     }
 
     // Duration.toString() would log "PT2M3S". formatDurationWords throws below zero and rounds sub-second to "0s".
     static String humanDuration(Duration duration) {
+        if (duration == null) {
+            return "an unknown duration";
+        }
+
         long millis = duration.toMillis();
         return millis < 1000 ? millis + "ms" : DurationFormatUtils.formatDurationWords(millis, true, true);
     }
