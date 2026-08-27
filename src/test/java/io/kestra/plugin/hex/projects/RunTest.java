@@ -2,26 +2,34 @@ package io.kestra.plugin.hex.projects;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeoutException;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
+import org.slf4j.event.Level;
 
 import com.github.tomakehurst.wiremock.junit5.WireMockRuntimeInfo;
 import com.github.tomakehurst.wiremock.junit5.WireMockTest;
 import com.github.tomakehurst.wiremock.stubbing.Scenario;
 
 import io.kestra.core.junit.annotations.KestraTest;
+import io.kestra.core.models.executions.LogEntry;
 import io.kestra.core.models.property.Property;
+import io.kestra.core.queues.QueueFactoryInterface;
+import io.kestra.core.queues.QueueInterface;
 import io.kestra.core.runners.RunContext;
 import io.kestra.core.runners.RunContextFactory;
 import io.kestra.core.utils.IdUtils;
 import io.kestra.core.utils.TestsUtils;
 
 import jakarta.inject.Inject;
+import jakarta.inject.Named;
 import jakarta.validation.ConstraintViolationException;
+import reactor.core.publisher.Flux;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.delete;
@@ -47,6 +55,10 @@ class RunTest {
 
     @Inject
     private RunContextFactory runContextFactory;
+
+    @Inject
+    @Named(QueueFactoryInterface.WORKERTASKLOG_NAMED)
+    private QueueInterface<LogEntry> logQueue;
 
     @Test
     void startsAndWaitsUntilCompleted(WireMockRuntimeInfo wm) throws Exception {
@@ -367,6 +379,89 @@ class RunTest {
         TimeoutException thrown = assertThrows(TimeoutException.class, () -> task.run(runContext(task)));
         assertThat(thrown.getMessage(), containsString(runId));
         assertThat(thrown.getMessage(), containsString("RUNNING"));
+    }
+
+    @Test
+    void logsACompletionLineWithTheFinalStatusAndDuration(WireMockRuntimeInfo wm) throws Exception {
+        String projectId = "proj-" + IdUtils.create();
+        String runId = "run-" + IdUtils.create();
+
+        stubFor(
+            post(urlEqualTo("/projects/" + projectId + "/runs"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(startBody(projectId, runId)))
+        );
+        stubFor(
+            get(urlEqualTo("/projects/" + projectId + "/runs/" + runId))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                    .withBody(statusBody(projectId, runId, "COMPLETED", "2026-01-01T00:00:00Z", "2026-01-01T00:01:23Z")))
+        );
+
+        Run task = Run.builder()
+            .id(IdUtils.create())
+            .type(Run.class.getName())
+            .apiToken(Property.ofValue("dummy-token"))
+            .baseUrl(Property.ofValue(wm.getHttpBaseUrl()))
+            .projectId(Property.ofValue(projectId))
+            .build();
+
+        List<LogEntry> logs = new CopyOnWriteArrayList<>();
+        Flux<LogEntry> receive = TestsUtils.receive(logQueue, either -> logs.add(either.getLeft()));
+
+        task.run(runContext(task));
+
+        LogEntry completion = TestsUtils.awaitLog(logs, log -> log.getMessage() != null && log.getMessage().contains("finished with status"));
+        receive.blockLast();
+
+        assertThat(completion.getLevel(), is(Level.INFO));
+        assertThat(completion.getMessage(), containsString("finished with status COMPLETED in 1 minute 23 seconds"));
+        assertThat(completion.getMessage(), containsString("https://app.hex.tech/hex/" + projectId + "/run/" + runId));
+    }
+
+    @Test
+    void logsTheCompletionLineAtWarnWhenTheRunFails(WireMockRuntimeInfo wm) throws Exception {
+        String projectId = "proj-" + IdUtils.create();
+        String runId = "run-" + IdUtils.create();
+
+        stubFor(
+            post(urlEqualTo("/projects/" + projectId + "/runs"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(startBody(projectId, runId)))
+        );
+        stubFor(
+            get(urlEqualTo("/projects/" + projectId + "/runs/" + runId))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                    .withBody(statusBody(projectId, runId, "ERRORED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:05Z")))
+        );
+
+        Run task = Run.builder()
+            .id(IdUtils.create())
+            .type(Run.class.getName())
+            .apiToken(Property.ofValue("dummy-token"))
+            .baseUrl(Property.ofValue(wm.getHttpBaseUrl()))
+            .projectId(Property.ofValue(projectId))
+            .build();
+
+        List<LogEntry> logs = new CopyOnWriteArrayList<>();
+        Flux<LogEntry> receive = TestsUtils.receive(logQueue, either -> logs.add(either.getLeft()));
+
+        assertThrows(IllegalStateException.class, () -> task.run(runContext(task)));
+
+        LogEntry completion = TestsUtils.awaitLog(logs, log -> log.getMessage() != null && log.getMessage().contains("finished with status"));
+        receive.blockLast();
+
+        assertThat(completion.getLevel(), is(Level.WARN));
+        assertThat(completion.getMessage(), containsString("finished with status ERRORED in 5 seconds"));
+    }
+
+    @Test
+    void formatsElapsedDurationForHumans() {
+        assertThat(Run.humanDuration(Duration.ofSeconds(5)), is("5 seconds"));
+        assertThat(Run.humanDuration(Duration.ofSeconds(83)), is("1 minute 23 seconds"));
+        assertThat(Run.humanDuration(Duration.ofSeconds(3725)), is("1 hour 2 minutes 5 seconds"));
+        assertThat(Run.humanDuration(Duration.ofHours(30)), is("1 day 6 hours"));
+        // Sub-second and skewed durations would be "0 seconds" or an IllegalArgumentException from the formatter.
+        assertThat(Run.humanDuration(Duration.ZERO), is("0ms"));
+        assertThat(Run.humanDuration(Duration.ofMillis(850)), is("850ms"));
+        assertThat(Run.humanDuration(Duration.ofMillis(-500)), is("-500ms"));
     }
 
     private RunContext runContext(Run task) {

@@ -51,6 +51,10 @@ dependencies {
     annotationProcessor group: "io.kestra", name: "processor", version: kestraVersion
     compileOnly group: "io.kestra", name: "core", version: kestraVersion
     compileOnly group: "io.kestra", name: "script", version: kestraVersion
+
+    // Version managed by the io.kestra:platform BOM. compileOnly because Kestra already ships it at runtime,
+    // so it stays out of the plugin jar.
+    compileOnly "org.apache.commons:commons-lang3"
 }
 
 

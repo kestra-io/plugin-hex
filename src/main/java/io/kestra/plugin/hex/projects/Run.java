@@ -9,6 +9,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.apache.commons.lang3.time.DurationFormatUtils;
 import org.slf4j.Logger;
 
 import io.kestra.core.exceptions.ResourceExpiredException;
@@ -226,23 +227,33 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
         if (currentRun.status().isTerminal()) {
             clearRunId(runContext);
             var elapsed = currentRun.elapsedDuration();
-            logger.info(
-                "Hex run '{}' for project '{}' finished with status {}{}; view it in Hex: {}",
+            var failed = currentRun.status().isFailure();
+            // Trailing placeholders are the elapsed time and the Hex link, both of which can be absent.
+            String message = "Hex run '{}' for project '{}' finished with status {}{}.{}";
+            Object[] arguments = {
                 runId, rProjectId, currentRun.status(),
-                elapsed != null ? " in " + elapsed : "",
-                currentRun.runUrl()
-            );
+                elapsed != null ? " in " + humanDuration(elapsed) : "",
+                // The exception below carries the link for a failed run, so repeating it here would be noise.
+                failed ? "" : hexLink(currentRun.runUrl())
+            };
+            // A failed run is logged at WARN so it stands out in the log stream, right before the exception below
+            // fails the task. Anything else is routine progress.
+            if (failed) {
+                logger.warn(message, arguments);
+            } else {
+                logger.info(message, arguments);
+            }
         } else {
             logger.info(
-                "Hex run '{}' for project '{}' is {}, returning without waiting for completion; view it in Hex: {}",
-                runId, rProjectId, currentRun.status(), currentRun.runUrl()
+                "Hex run '{}' for project '{}' is {}, returning without waiting for completion.{}",
+                runId, rProjectId, currentRun.status(), hexLink(currentRun.runUrl())
             );
         }
 
         if (currentRun.status().isFailure()) {
             throw new IllegalStateException(
                 "Hex run '" + runId + "' for project '" + rProjectId + "' ended with status " + currentRun.status()
-                    + "; see the run in Hex for details: " + currentRun.runUrl()
+                    + "." + hexLink(currentRun.runUrl())
             );
         }
 
@@ -297,6 +308,25 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
 
     private static String kvKey(RunContext runContext) {
         return REATTACH_KV_PREFIX + runContext.taskRunInfo().taskRunId();
+    }
+
+    // Hex returns runUrl on both the start and the status endpoints, but a missing one should read as nothing
+    // rather than "View it in Hex: null". The leading space belongs to the segment, not the caller's format string.
+    private static String hexLink(String runUrl) {
+        return runUrl != null ? " View it in Hex: " + runUrl : "";
+    }
+
+    // Duration.toString() renders ISO-8601, so a two minute run would log as "PT2M3S".
+    // DurationFormatUtils throws on a negative duration and collapses anything under a second to "0 seconds",
+    // so sub-second and skewed durations (elapsedDuration() can subtract Hex-reported timestamps) are handled here.
+    // Package-private so it can be asserted directly.
+    static String humanDuration(Duration duration) {
+        long millis = duration.toMillis();
+        if (millis < 1000) {
+            return millis + "ms";
+        }
+
+        return DurationFormatUtils.formatDurationWords(millis, true, true);
     }
 
     @Builder
