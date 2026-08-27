@@ -423,7 +423,7 @@ class RunTest {
         assertThat(Run.humanDuration(Duration.ofSeconds(83)), is("1 minute 23 seconds"));
         assertThat(Run.humanDuration(Duration.ofSeconds(3725)), is("1 hour 2 minutes 5 seconds"));
         assertThat(Run.humanDuration(Duration.ofHours(30)), is("1 day 6 hours"));
-        // Sub-second and skewed durations would be "0 seconds" or an IllegalArgumentException from the formatter.
+        // Sub-second and negative durations skip the formatter.
         assertThat(Run.humanDuration(Duration.ZERO), is("0ms"));
         assertThat(Run.humanDuration(Duration.ofMillis(850)), is("850ms"));
         assertThat(Run.humanDuration(Duration.ofMillis(-500)), is("-500ms"));

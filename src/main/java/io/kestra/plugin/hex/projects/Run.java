@@ -230,7 +230,7 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
 
         var summary = summarize(runId, rProjectId, currentRun);
         if (currentRun.status().isFailure()) {
-            // Kestra logs a task exception at ERROR, so this doubles as the run's completion line.
+            // Kestra logs a task exception at ERROR, so this is the failed run's completion line.
             throw new IllegalStateException(summary);
         }
 
@@ -289,35 +289,33 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
         return REATTACH_KV_PREFIX + runContext.taskRunInfo().taskRunId();
     }
 
-    // How a run is reported, whether it succeeded, failed, or was left running:
-    //   Hex run 'r' for project 'p' finished with status COMPLETED in 5 seconds. View it in Hex: <url>
-    //   Hex run 'r' for project 'p' is RUNNING, returning without waiting for completion. View it in Hex: <url>
+    // Used for both the log line and the failure message, so a run reads the same either way.
     private static String summarize(String runId, String projectId, HexRun run) {
-        var elapsed = run.elapsedDuration();
-        var outcome = run.status().isTerminal()
-            ? "finished with status " + run.status() + (elapsed != null ? " in " + humanDuration(elapsed) : "")
-            : "is " + run.status() + ", returning without waiting for completion";
+        var sentence = "Hex run '%s' for project '%s'".formatted(runId, projectId);
 
-        return "Hex run '%s' for project '%s' %s.".formatted(runId, projectId, outcome) + hexLink(run.runUrl());
-    }
+        if (run.status().isTerminal()) {
+            sentence += " finished with status " + run.status();
 
-    // Hex returns runUrl on both the start and the status endpoints, but a missing one should read as nothing
-    // rather than "View it in Hex: null".
-    private static String hexLink(String runUrl) {
-        return runUrl != null ? " View it in Hex: " + runUrl : "";
-    }
+            var elapsed = run.elapsedDuration();
+            if (elapsed != null) {
+                sentence += " in " + humanDuration(elapsed);
+            }
+        } else {
+            sentence += " is " + run.status() + ", returning without waiting for completion";
+        }
+        sentence += ".";
 
-    // Duration.toString() renders ISO-8601, so a two minute run would log as "PT2M3S".
-    // DurationFormatUtils throws on a negative duration and collapses anything under a second to "0 seconds",
-    // so sub-second and skewed durations (elapsedDuration() can subtract Hex-reported timestamps) are handled here.
-    // Package-private so it can be asserted directly.
-    static String humanDuration(Duration duration) {
-        long millis = duration.toMillis();
-        if (millis < 1000) {
-            return millis + "ms";
+        if (run.runUrl() != null) {
+            sentence += " View it in Hex: " + run.runUrl();
         }
 
-        return DurationFormatUtils.formatDurationWords(millis, true, true);
+        return sentence;
+    }
+
+    // Duration.toString() would log "PT2M3S". formatDurationWords throws below zero and rounds sub-second to "0s".
+    static String humanDuration(Duration duration) {
+        long millis = duration.toMillis();
+        return millis < 1000 ? millis + "ms" : DurationFormatUtils.formatDurationWords(millis, true, true);
     }
 
     @Builder
