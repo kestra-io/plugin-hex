@@ -4,7 +4,7 @@ Run [Hex](https://hex.tech) notebook/app projects from Kestra flows, and react w
 
 ## Authentication
 
-Every task and trigger requires `apiToken` (required), a Hex API key created from your Hex workspace's API key settings. Store it as a [secret](https://kestra.io/docs/concepts/secret), for example `{{ secret('HEX_API_TOKEN') }}`, and never hardcode it in a flow. `baseUrl` (optional, defaults to `https://app.hex.tech/api/v1`) only needs to be overridden for a self-hosted Hex region. Both properties can be shared across flows with [plugin defaults](https://kestra.io/docs/workflow-components/plugin-defaults).
+Every task and trigger requires `apiToken` (required), a Hex API key created from your Hex workspace's API key settings. Store it as a [secret](https://kestra.io/docs/concepts/secret), for example `{{ secret('HEX_API_TOKEN') }}`, and never hardcode it in a flow. `baseUrl` (optional, defaults to `https://app.hex.tech/api/v1`) only needs to be overridden for a self-hosted Hex region. Set both properties on each task.
 
 ## Tasks
 
