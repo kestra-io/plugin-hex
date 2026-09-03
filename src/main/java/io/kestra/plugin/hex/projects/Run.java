@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Pattern;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -123,10 +124,11 @@ import static java.util.Objects.requireNonNullElse;
 )
 public class Run extends Task implements RunnableTask<Run.Output>, HexConnectionInterface {
     private static final String REATTACH_KV_PREFIX = "hex_run_reattach_";
-    // EE owns the concrete asset types and has no report or dashboard type, so a Hex project is a Dataset, the
-    // same type Fivetran uses for its connector-grain asset. Named as a string so this stays an OSS-only build.
+    // A string, not the EE class, so the build stays OSS-only.
     private static final String ASSET_TYPE = "io.kestra.plugin.ee.assets.Dataset";
     private static final String ASSET_SYSTEM = "hex";
+    // Core's Asset.id contract.
+    private static final Pattern ASSET_ID_PATTERN = Pattern.compile("^[a-zA-Z0-9][a-zA-Z0-9._-]*$");
     // Added on top of maxDuration to size the reattach entry's TTL. The entry is refreshed on every
     // attempt and deleted on a terminal state, so this is only a backstop: it has to outlive one attempt
     // (hence maxDuration) plus the gap to the next retry, and refreshing carries it across the whole
@@ -328,11 +330,8 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
         return REATTACH_KV_PREFIX + runContext.taskRunInfo().taskRunId();
     }
 
-    // Records the project as a lineage node so a Fivetran -> dbt -> Hex chain does not stop at the dbt marts.
-    // Called only after the run succeeded, because core skips the asset upsert for a failed task run.
-    // The id is the project id verbatim: core's Asset.id allows mixed case, and rewriting it would leave a
-    // hand-declared assets.inputs entry pointing at a second, disconnected node.
-    // Nothing here can fail the task, since lineage is metadata about the run and never the run itself.
+    // Called only after a successful run: core skips the asset upsert for a failed task run.
+    // Never fails the task, since lineage is metadata about the run.
     private void emitAsset(RunContext runContext, String projectId, HexRun run) {
         try {
             AssetsDeclaration declaration = this.getAssets();
@@ -340,8 +339,13 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
                 return;
             }
 
-            // The asset is the project, so nothing here describes one run of it: a run's status and timing are
-            // already task outputs, and would go stale on the asset the moment the next run started.
+            // Rewriting a bad id would land on a node nothing joins, so skip instead.
+            if (!ASSET_ID_PATTERN.matcher(projectId).matches()) {
+                runContext.logger().debug("Project '{}' is not a usable asset id, skipping lineage.", projectId);
+                return;
+            }
+
+            // The asset is the project, so no run-scoped fields: they go stale on the next run.
             var metadata = new LinkedHashMap<String, Object>();
             metadata.put("system", ASSET_SYSTEM);
             var location = projectUrl(run.runUrl());
@@ -349,6 +353,7 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
                 metadata.put("location", location);
             }
 
+            // The id stays verbatim: Asset.id allows mixed case, and rewriting it splits the node.
             var asset = Custom.builder()
                 .id(projectId)
                 .type(ASSET_TYPE)
@@ -363,8 +368,7 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
         }
     }
 
-    // Hex reports a run URL but no project URL, and the workspace slug it starts with is not derivable, so the
-    // project's page is everything before the last run segment. Null when Hex reported no URL to cut.
+    // Hex reports no project URL, so the project's page is everything before the last run segment.
     private static String projectUrl(String runUrl) {
         if (runUrl == null) {
             return null;
