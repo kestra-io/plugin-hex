@@ -3,6 +3,9 @@ package io.kestra.plugin.hex.projects;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeoutException;
@@ -14,11 +17,14 @@ import org.slf4j.Logger;
 
 import io.kestra.core.exceptions.ResourceExpiredException;
 import io.kestra.core.models.annotations.Example;
+import io.kestra.core.models.assets.AssetsDeclaration;
+import io.kestra.core.models.assets.Custom;
 import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.models.annotations.PluginProperty;
 import io.kestra.core.models.property.Property;
 import io.kestra.core.models.tasks.RunnableTask;
 import io.kestra.core.models.tasks.Task;
+import io.kestra.core.runners.AssetEmit;
 import io.kestra.core.runners.RunContext;
 import io.kestra.core.storages.kv.KVMetadata;
 import io.kestra.core.storages.kv.KVValueAndMetadata;
@@ -52,6 +58,10 @@ import static java.util.Objects.requireNonNullElse;
         If the task is retried after a worker restart, it reattaches to the run it already started instead of starting a \
         duplicate: the run ID is persisted to the flow's namespace KV store keyed by this task run, and is looked up again \
         on every attempt before deciding whether to call the start endpoint.
+
+        With `assets.enableAuto` set, emits one asset for the Hex project so Hex appears as the terminal consumer of a \
+        lineage chain. Hex's API does not report which tables a project reads, so upstream edges are declared with \
+        `assets.inputs`.
         """
 )
 @Plugin(
@@ -86,11 +96,38 @@ import static java.util.Objects.requireNonNullElse;
                       run_date: "{{ now() | date('yyyy-MM-dd') }}"
                     wait: false
                 """
+        ),
+        @Example(
+            title = "Run a Hex project and record it as the terminal node of a dbt lineage chain.",
+            full = true,
+            code = """
+                id: run_hex_project_with_assets
+                namespace: company.team
+
+                tasks:
+                  - id: refresh_dashboard
+                    type: io.kestra.plugin.hex.projects.Run
+                    apiToken: "{{ secret('HEX_API_TOKEN') }}"
+                    projectId: "00000000-0000-0000-0000-000000000000"
+                    assets:
+                      enableAuto: true
+                      # Hex reports no upstream tables, so the project's sources are declared here using the
+                      # database.schema.table ids that dbt and Fivetran emit, which is what joins the graph.
+                      inputs:
+                        - id: analytics.marts.fct_orders
+                          type: io.kestra.plugin.ee.assets.Table
+                        - id: analytics.marts.dim_customers
+                          type: io.kestra.plugin.ee.assets.Table
+                """
         )
     }
 )
 public class Run extends Task implements RunnableTask<Run.Output>, HexConnectionInterface {
     private static final String REATTACH_KV_PREFIX = "hex_run_reattach_";
+    // EE owns the concrete asset types and has no report or dashboard type, so a Hex project is a Dataset, the
+    // same type Fivetran uses for its connector-grain asset. Named as a string so this stays an OSS-only build.
+    private static final String ASSET_TYPE = "io.kestra.plugin.ee.assets.Dataset";
+    private static final String ASSET_SYSTEM = "hex";
     // Added on top of maxDuration to size the reattach entry's TTL. The entry is refreshed on every
     // attempt and deleted on a terminal state, so this is only a backstop: it has to outlive one attempt
     // (hence maxDuration) plus the gap to the next retry, and refreshing carries it across the whole
@@ -229,6 +266,8 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
             clearRunId(runContext);
         }
 
+        emitAsset(runContext, rProjectId, currentRun);
+
         var summary = summarize(runId, rProjectId, currentRun);
         if (currentRun.status().isFailure()) {
             // Kestra logs a task exception at ERROR, so this is the failed run's completion line.
@@ -288,6 +327,57 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
 
     private static String kvKey(RunContext runContext) {
         return REATTACH_KV_PREFIX + runContext.taskRunInfo().taskRunId();
+    }
+
+    // Records the project as a lineage node so a Fivetran -> dbt -> Hex chain does not stop at the dbt marts.
+    // Emitted for a failed run too, with the status in metadata, since the graph describes the project either way.
+    // Nothing here can fail the task: lineage is metadata about the run, never the run itself.
+    private void emitAsset(RunContext runContext, String projectId, HexRun run) {
+        AssetsDeclaration declaration = this.getAssets();
+        try {
+            if (declaration == null || !runContext.render(declaration.getEnableAuto()).as(Boolean.class).orElse(false)) {
+                return;
+            }
+        } catch (Exception e) {
+            runContext.logger().warn("Could not read assets.enableAuto, skipping lineage.", e);
+            return;
+        }
+
+        var metadata = new LinkedHashMap<String, Object>();
+        metadata.put("system", ASSET_SYSTEM);
+        metadata.put("projectId", projectId);
+        metadata.put("status", run.status().name());
+        var location = projectUrl(run.runUrl());
+        if (location != null) {
+            metadata.put("location", location);
+        }
+
+        var asset = Custom.builder()
+            // Core requires ^[a-z0-9][a-z0-9._-]* and a Hex project id is a lowercase UUID, so only a hand-pasted
+            // id needs its case normalized. A still-invalid id is reported by emit() rather than pre-validated.
+            .id(projectId.toLowerCase(Locale.ROOT))
+            .type(ASSET_TYPE)
+            .metadata(metadata)
+            .build();
+
+        try {
+            runContext.assets().emit(new AssetEmit(List.of(), List.of(asset)));
+        } catch (UnsupportedOperationException e) {
+            runContext.logger().debug("Asset emission is not supported in this edition, skipping lineage.");
+        } catch (Exception e) {
+            runContext.logger().warn("Unable to emit the Hex asset for project '{}'.", projectId, e);
+        }
+    }
+
+    // Hex reports a run URL but no project URL, and the workspace slug it starts with is not derivable, so the
+    // project's page is everything before the run segment. Null when Hex reported no URL to cut.
+    private static String projectUrl(String runUrl) {
+        if (runUrl == null) {
+            return null;
+        }
+
+        int runSegment = runUrl.indexOf("/run/");
+        return runSegment > 0 ? runUrl.substring(0, runSegment) : null;
     }
 
     // Used for both the log line and the failure message, so a run reads the same either way.

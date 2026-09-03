@@ -23,7 +23,7 @@ Hex exposes a REST API only; there is no official Java SDK. All HTTP calls go th
 
 ### Key Plugin Classes
 
-- `io.kestra.plugin.hex.projects.Run`: `RunnableTask<Run.Output>`. Starts the latest published version of a project (`POST /projects/{projectId}/runs`) and, when `wait` is true (default), polls `GET /projects/{projectId}/runs/{runId}` until a terminal status. Reattaches to an already in-flight run instead of starting a duplicate (see Reattach below), and cancels the run via `DELETE` on `kill()`.
+- `io.kestra.plugin.hex.projects.Run`: `RunnableTask<Run.Output>`. Starts the latest published version of a project (`POST /projects/{projectId}/runs`) and, when `wait` is true (default), polls `GET /projects/{projectId}/runs/{runId}` until a terminal status. Reattaches to an already in-flight run instead of starting a duplicate (see Reattach below), and cancels the run via `DELETE` on `kill()`. With `assets.enableAuto`, emits one asset for the project (see Assets below).
 - `io.kestra.plugin.hex.projects.Trigger`: `AbstractTrigger` + `PollingTriggerInterface` + `TriggerOutput<Run.Output>`. Polls `GET /projects/{projectId}/runs?limit=1&statusFilter=COMPLETED` and fires once the most recent run reaches `COMPLETED`, deduplicating on run ID.
 - `io.kestra.plugin.hex.projects.HexConnectionInterface`: shared Hex API calls (start, get, list, cancel a run) as default methods, since a `Task` and a `Trigger` cannot share a common superclass. Implementors only expose `getApiToken()` and `getBaseUrl()`. Also holds the nested `HexRunList` record for the list-runs response and translates non-2xx responses into actionable messages.
 - `io.kestra.plugin.hex.projects.RunStatus`: enum of Hex run statuses (`PENDING`/`RUNNING`/`ERRORED`/`COMPLETED`/`KILLED`/`UNABLE_TO_ALLOCATE_KERNEL`/`UNKNOWN`), with `isTerminal()`/`isFailure()` classification used by both `Run` and `Trigger`.
@@ -32,6 +32,10 @@ Hex exposes a REST API only; there is no official Java SDK. All HTTP calls go th
 ### Reattach contract (Run)
 
 `RunContext.stateStore()` is deprecated for removal as of Kestra 1.1.0, so `Run` does not use it. Instead it persists the Hex run ID directly to the flow's namespace KV store (`runContext.namespaceKv(runContext.flowInfo().namespace())`), keyed by `runContext.taskRunInfo().taskRunId()` (stable across attempts of the same task run, unique per execution, so concurrent executions of the same flow never collide). On `run()`, it looks up that key before deciding whether to call the start endpoint; if a run ID is already present, it reattaches to that run's status instead of starting a duplicate. The entry is refreshed on every attempt and cleared once the run reaches a terminal state. Its TTL is `maxDuration` plus a fixed 7-day buffer, deliberately not `maxDuration` alone: the entry has to outlive one full attempt (which can last up to `maxDuration`) plus the gap to the next retry, and refreshing it each attempt carries it across the whole retry sequence regardless of retry interval or attempt count. An entry that has expired is treated as no run in flight, so a fresh run is started.
+
+### Assets (Run)
+
+`Run` emits one asset for the Hex project when the flow sets `assets.enableAuto`, which is off by default, so Hex becomes the terminal node of a Fivetran to dbt to Hex chain. The type is the string `io.kestra.plugin.ee.assets.Dataset`, named as a string because EE owns the concrete types and this stays an OSS-only build. The asset id is the project id lowercased, since core constrains an id to `^[a-z0-9][a-z0-9._-]*`. Hex reports no project URL, so `location` is the run URL cut at `/run/`, and no upstream tables, so inputs stay user-declared through core's `assets.inputs`. Emission never fails the task: on OSS `emit()` throws `UnsupportedOperationException` and is logged at debug.
 
 ### Project Structure
 
