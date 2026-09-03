@@ -275,7 +275,10 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
 
         logger.info(summary);
 
-        emitAsset(runContext, rProjectId, currentRun);
+        // wait: false returns a queued run on a successful task, which must not read as a produced dataset.
+        if (currentRun.status() == RunStatus.COMPLETED) {
+            emitAsset(runContext, rProjectId, currentRun);
+        }
 
         return Output.of(runId, currentRun);
     }
@@ -330,8 +333,7 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
         return REATTACH_KV_PREFIX + runContext.taskRunInfo().taskRunId();
     }
 
-    // Called only after a successful run: core skips the asset upsert for a failed task run.
-    // Never fails the task, since lineage is metadata about the run.
+    // Called only for a COMPLETED run. Never fails the task, since lineage is metadata about the run.
     private void emitAsset(RunContext runContext, String projectId, HexRun run) {
         try {
             AssetsDeclaration declaration = this.getAssets();

@@ -20,7 +20,7 @@ public class TestAssetManagerFactory extends AssetManagerFactory {
 
     @Override
     public AssetEmitter of(boolean enable) {
-        return unsupported ? new UnsupportedEmitter() : new TrackingEmitter(emitted, enable);
+        return unsupported ? new UnsupportedEmitter() : new TrackingEmitter(emitted);
     }
 
     List<AssetEmit> emitted() {
@@ -42,19 +42,16 @@ public class TestAssetManagerFactory extends AssetManagerFactory {
     private static final class TrackingEmitter implements AssetEmitter {
         private final List<AssetEmit> shared;
         private final List<AssetEmit> own = new ArrayList<>();
-        private final boolean enable;
 
-        private TrackingEmitter(List<AssetEmit> shared, boolean enable) {
+        private TrackingEmitter(List<AssetEmit> shared) {
             this.shared = shared;
-            this.enable = enable;
         }
 
+        // Records regardless of enable, so a test can see whether the task itself called emit at all.
         @Override
         public void emit(AssetEmit assetEmit) {
-            if (enable) {
-                own.add(assetEmit);
-                shared.add(assetEmit);
-            }
+            own.add(assetEmit);
+            shared.add(assetEmit);
         }
 
         @Override

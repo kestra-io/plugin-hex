@@ -173,6 +173,7 @@ class RunTest {
             .baseUrl(Property.ofValue(wm.getHttpBaseUrl()))
             .projectId(Property.ofValue(projectId))
             .wait(Property.ofValue(false))
+            .assets(new AssetsDeclaration(true, List.of(), List.of()))
             .build();
 
         Run.Output output = task.run(runContext(task));
@@ -180,6 +181,8 @@ class RunTest {
         assertThat(output.getRunId(), is(runId));
         assertThat(output.getRunUrl(), is("https://app.hex.tech/hex/" + projectId + "/run/" + runId));
         assertThat(output.getStatus(), is("RUNNING"));
+        // A queued run is not a produced dataset, even though the task succeeded.
+        assertThat(assetManagerFactory.emitted(), is(empty()));
 
         // Only the initial status snapshot is fetched, not a polling loop.
         verify(exactly(1), getRequestedFor(urlEqualTo("/projects/" + projectId + "/runs/" + runId)));
