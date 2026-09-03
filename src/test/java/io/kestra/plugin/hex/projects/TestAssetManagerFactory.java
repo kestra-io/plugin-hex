@@ -37,17 +37,29 @@ public class TestAssetManagerFactory extends AssetManagerFactory {
         unsupported = false;
     }
 
-    private record TrackingEmitter(List<AssetEmit> emitted, boolean enable) implements AssetEmitter {
+    // emitted() is what the worker reads to attach one run context's emissions to its own task run, so it
+    // reports this emitter's own list, while the factory-wide one is what tests assert against.
+    private static final class TrackingEmitter implements AssetEmitter {
+        private final List<AssetEmit> shared;
+        private final List<AssetEmit> own = new ArrayList<>();
+        private final boolean enable;
+
+        private TrackingEmitter(List<AssetEmit> shared, boolean enable) {
+            this.shared = shared;
+            this.enable = enable;
+        }
+
         @Override
         public void emit(AssetEmit assetEmit) {
             if (enable) {
-                emitted.add(assetEmit);
+                own.add(assetEmit);
+                shared.add(assetEmit);
             }
         }
 
         @Override
         public List<AssetEmit> emitted() {
-            return List.copyOf(emitted);
+            return List.copyOf(own);
         }
     }
 

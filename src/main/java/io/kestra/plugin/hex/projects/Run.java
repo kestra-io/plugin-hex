@@ -5,7 +5,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeoutException;
@@ -17,10 +16,10 @@ import org.slf4j.Logger;
 
 import io.kestra.core.exceptions.ResourceExpiredException;
 import io.kestra.core.models.annotations.Example;
-import io.kestra.core.models.assets.AssetsDeclaration;
-import io.kestra.core.models.assets.Custom;
 import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.models.annotations.PluginProperty;
+import io.kestra.core.models.assets.AssetsDeclaration;
+import io.kestra.core.models.assets.Custom;
 import io.kestra.core.models.property.Property;
 import io.kestra.core.models.tasks.RunnableTask;
 import io.kestra.core.models.tasks.Task;
@@ -266,8 +265,6 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
             clearRunId(runContext);
         }
 
-        emitAsset(runContext, rProjectId, currentRun);
-
         var summary = summarize(runId, rProjectId, currentRun);
         if (currentRun.status().isFailure()) {
             // Kestra logs a task exception at ERROR, so this is the failed run's completion line.
@@ -275,6 +272,8 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
         }
 
         logger.info(summary);
+
+        emitAsset(runContext, rProjectId, currentRun);
 
         return Output.of(runId, currentRun);
     }
@@ -330,37 +329,32 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
     }
 
     // Records the project as a lineage node so a Fivetran -> dbt -> Hex chain does not stop at the dbt marts.
-    // Emitted for a failed run too, with the status in metadata, since the graph describes the project either way.
-    // Nothing here can fail the task: lineage is metadata about the run, never the run itself.
+    // Called only after the run succeeded, because core skips the asset upsert for a failed task run.
+    // The id is the project id verbatim: core's Asset.id allows mixed case, and rewriting it would leave a
+    // hand-declared assets.inputs entry pointing at a second, disconnected node.
+    // Nothing here can fail the task, since lineage is metadata about the run and never the run itself.
     private void emitAsset(RunContext runContext, String projectId, HexRun run) {
-        AssetsDeclaration declaration = this.getAssets();
         try {
+            AssetsDeclaration declaration = this.getAssets();
             if (declaration == null || !runContext.render(declaration.getEnableAuto()).as(Boolean.class).orElse(false)) {
                 return;
             }
-        } catch (Exception e) {
-            runContext.logger().warn("Could not read assets.enableAuto, skipping lineage.", e);
-            return;
-        }
 
-        var metadata = new LinkedHashMap<String, Object>();
-        metadata.put("system", ASSET_SYSTEM);
-        metadata.put("projectId", projectId);
-        metadata.put("status", run.status().name());
-        var location = projectUrl(run.runUrl());
-        if (location != null) {
-            metadata.put("location", location);
-        }
+            // The asset is the project, so nothing here describes one run of it: a run's status and timing are
+            // already task outputs, and would go stale on the asset the moment the next run started.
+            var metadata = new LinkedHashMap<String, Object>();
+            metadata.put("system", ASSET_SYSTEM);
+            var location = projectUrl(run.runUrl());
+            if (location != null) {
+                metadata.put("location", location);
+            }
 
-        var asset = Custom.builder()
-            // Core requires ^[a-z0-9][a-z0-9._-]* and a Hex project id is a lowercase UUID, so only a hand-pasted
-            // id needs its case normalized. A still-invalid id is reported by emit() rather than pre-validated.
-            .id(projectId.toLowerCase(Locale.ROOT))
-            .type(ASSET_TYPE)
-            .metadata(metadata)
-            .build();
+            var asset = Custom.builder()
+                .id(projectId)
+                .type(ASSET_TYPE)
+                .metadata(metadata)
+                .build();
 
-        try {
             runContext.assets().emit(new AssetEmit(List.of(), List.of(asset)));
         } catch (UnsupportedOperationException e) {
             runContext.logger().debug("Asset emission is not supported in this edition, skipping lineage.");
@@ -370,13 +364,13 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
     }
 
     // Hex reports a run URL but no project URL, and the workspace slug it starts with is not derivable, so the
-    // project's page is everything before the run segment. Null when Hex reported no URL to cut.
+    // project's page is everything before the last run segment. Null when Hex reported no URL to cut.
     private static String projectUrl(String runUrl) {
         if (runUrl == null) {
             return null;
         }
 
-        int runSegment = runUrl.indexOf("/run/");
+        int runSegment = runUrl.lastIndexOf("/run/");
         return runSegment > 0 ? runUrl.substring(0, runSegment) : null;
     }
 

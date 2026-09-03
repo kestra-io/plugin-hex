@@ -3,11 +3,11 @@ package io.kestra.plugin.hex.projects;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeoutException;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
@@ -70,7 +70,10 @@ class RunTest {
     @Inject
     private TestAssetManagerFactory assetManagerFactory;
 
+    // The factory is a singleton shared with every other test class, and one test flips its unsupported flag,
+    // so it is reset on the way out as well as the way in.
     @BeforeEach
+    @AfterEach
     void resetAssets() {
         assetManagerFactory.clear();
     }
@@ -446,7 +449,8 @@ class RunTest {
 
     @Test
     void emitsTheProjectAssetWhenAssetsAreEnabled(WireMockRuntimeInfo wm) throws Exception {
-        // Upper case on purpose: core rejects an asset id that is not lower case, and a project id gets pasted by hand.
+        // Mixed case on purpose: core's Asset.id allows it, so the id must survive verbatim or a hand-declared
+        // assets.inputs entry naming the same project would land on a second node.
         String projectId = "5A2B1C3D-1234-4A5B-8C9D-0E1F2A3B4C5D";
         String runId = "run-" + IdUtils.create();
 
@@ -475,17 +479,15 @@ class RunTest {
         assertThat(emitted, hasSize(1));
 
         Asset asset = emitted.get(0).outputs().get(0);
-        assertThat(asset.getId(), is(projectId.toLowerCase(Locale.ROOT)));
+        assertThat(asset.getId(), is(projectId));
         assertThat(asset.getType(), is("io.kestra.plugin.ee.assets.Dataset"));
         assertThat(asset.getMetadata().get("system"), is("hex"));
-        assertThat(asset.getMetadata().get("projectId"), is(projectId));
-        assertThat(asset.getMetadata().get("status"), is("COMPLETED"));
         // The project's own page, which Hex only reports as the prefix of a run URL.
         assertThat(asset.getMetadata().get("location"), is("https://app.hex.tech/hex/" + projectId));
     }
 
     @Test
-    void emitsNoAssetWhenAssetsAreNotEnabled(WireMockRuntimeInfo wm) throws Exception {
+    void emitsNoAssetWhenEnableAutoIsFalse(WireMockRuntimeInfo wm) throws Exception {
         String projectId = "proj-" + IdUtils.create();
         String runId = "run-" + IdUtils.create();
 
@@ -505,6 +507,8 @@ class RunTest {
             .apiToken(Property.ofValue("dummy-token"))
             .baseUrl(Property.ofValue(wm.getHttpBaseUrl()))
             .projectId(Property.ofValue(projectId))
+            // Declared but off, which is the case the task's own gate has to catch.
+            .assets(new AssetsDeclaration(false, List.of(), List.of()))
             .build();
 
         task.run(runContext(task));

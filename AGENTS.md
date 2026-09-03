@@ -35,7 +35,9 @@ Hex exposes a REST API only; there is no official Java SDK. All HTTP calls go th
 
 ### Assets (Run)
 
-`Run` emits one asset for the Hex project when the flow sets `assets.enableAuto`, which is off by default, so Hex becomes the terminal node of a Fivetran to dbt to Hex chain. The type is the string `io.kestra.plugin.ee.assets.Dataset`, named as a string because EE owns the concrete types and this stays an OSS-only build. The asset id is the project id lowercased, since core constrains an id to `^[a-z0-9][a-z0-9._-]*`. Hex reports no project URL, so `location` is the run URL cut at `/run/`, and no upstream tables, so inputs stay user-declared through core's `assets.inputs`. Emission never fails the task: on OSS `emit()` throws `UnsupportedOperationException` and is logged at debug.
+`Run` emits one asset for the Hex project when the flow sets `assets.enableAuto`, which is off by default, so Hex becomes the terminal node of a Fivetran to dbt to Hex chain. The type is the string `io.kestra.plugin.ee.assets.Dataset`, named as a string because EE owns the concrete types and this stays an OSS-only build. The id is the project id verbatim: `Asset.id` allows mixed case (`^[a-zA-Z0-9][a-zA-Z0-9._-]*`, unlike `Asset.namespace`), and normalizing it would leave a hand-declared `assets.inputs` entry pointing at a second, disconnected node. Metadata is `system` and `location` only, since the asset is the project rather than one run of it, and EE's `Dataset` reads both from exactly those metadata keys. Hex reports no project URL, so `location` is the run URL cut at the last `/run/`, and no upstream tables, so inputs stay user-declared through core's `assets.inputs`.
+
+Emission happens only after a successful run, because `ExecutorService` skips the asset upsert when the task run is failed, and it can never fail the task: on OSS `emit()` throws `UnsupportedOperationException` and is logged at debug. Only `Run` emits, so a run started on a Hex schedule and caught by `Trigger` produces no asset: in Kestra 1.3 the only consumer of `runContext.assets().emitted()` is the worker, so a trigger's emissions would never be read.
 
 ### Project Structure
 
