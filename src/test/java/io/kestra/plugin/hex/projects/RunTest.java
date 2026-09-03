@@ -7,6 +7,8 @@ import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeoutException;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
@@ -17,10 +19,13 @@ import com.github.tomakehurst.wiremock.junit5.WireMockTest;
 import com.github.tomakehurst.wiremock.stubbing.Scenario;
 
 import io.kestra.core.junit.annotations.KestraTest;
+import io.kestra.core.models.assets.Asset;
+import io.kestra.core.models.assets.AssetsDeclaration;
 import io.kestra.core.models.executions.LogEntry;
 import io.kestra.core.models.property.Property;
 import io.kestra.core.queues.QueueFactoryInterface;
 import io.kestra.core.queues.QueueInterface;
+import io.kestra.core.runners.AssetEmit;
 import io.kestra.core.runners.RunContext;
 import io.kestra.core.runners.RunContextFactory;
 import io.kestra.core.utils.IdUtils;
@@ -45,6 +50,8 @@ import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.verify;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.empty;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -59,6 +66,17 @@ class RunTest {
     @Inject
     @Named(QueueFactoryInterface.WORKERTASKLOG_NAMED)
     private QueueInterface<LogEntry> logQueue;
+
+    @Inject
+    private TestAssetManagerFactory assetManagerFactory;
+
+    // The factory is a singleton shared with every other test class, and one test flips its unsupported flag,
+    // so it is reset on the way out as well as the way in.
+    @BeforeEach
+    @AfterEach
+    void resetAssets() {
+        assetManagerFactory.clear();
+    }
 
     @Test
     void startsAndWaitsUntilCompleted(WireMockRuntimeInfo wm) throws Exception {
@@ -155,6 +173,7 @@ class RunTest {
             .baseUrl(Property.ofValue(wm.getHttpBaseUrl()))
             .projectId(Property.ofValue(projectId))
             .wait(Property.ofValue(false))
+            .assets(new AssetsDeclaration(true, List.of(), List.of()))
             .build();
 
         Run.Output output = task.run(runContext(task));
@@ -162,6 +181,8 @@ class RunTest {
         assertThat(output.getRunId(), is(runId));
         assertThat(output.getRunUrl(), is("https://app.hex.tech/hex/" + projectId + "/run/" + runId));
         assertThat(output.getStatus(), is("RUNNING"));
+        // A queued run is not a produced dataset, even though the task succeeded.
+        assertThat(assetManagerFactory.emitted(), is(empty()));
 
         // Only the initial status snapshot is fetched, not a polling loop.
         verify(exactly(1), getRequestedFor(urlEqualTo("/projects/" + projectId + "/runs/" + runId)));
@@ -427,6 +448,105 @@ class RunTest {
         assertThat(Run.humanDuration(Duration.ZERO), is("0ms"));
         assertThat(Run.humanDuration(Duration.ofMillis(850)), is("850ms"));
         assertThat(Run.humanDuration(Duration.ofMillis(-500)), is("-500ms"));
+    }
+
+    @Test
+    void emitsTheProjectAssetWhenAssetsAreEnabled(WireMockRuntimeInfo wm) throws Exception {
+        // Mixed case on purpose: core's Asset.id allows it, so the id must survive verbatim or a hand-declared
+        // assets.inputs entry naming the same project would land on a second node.
+        String projectId = "5A2B1C3D-1234-4A5B-8C9D-0E1F2A3B4C5D";
+        String runId = "run-" + IdUtils.create();
+
+        stubFor(
+            post(urlEqualTo("/projects/" + projectId + "/runs"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(startBody(projectId, runId)))
+        );
+        stubFor(
+            get(urlEqualTo("/projects/" + projectId + "/runs/" + runId))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                    .withBody(statusBody(projectId, runId, "COMPLETED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:05Z")))
+        );
+
+        Run task = Run.builder()
+            .id(IdUtils.create())
+            .type(Run.class.getName())
+            .apiToken(Property.ofValue("dummy-token"))
+            .baseUrl(Property.ofValue(wm.getHttpBaseUrl()))
+            .projectId(Property.ofValue(projectId))
+            .assets(new AssetsDeclaration(true, List.of(), List.of()))
+            .build();
+
+        task.run(runContext(task));
+
+        List<AssetEmit> emitted = assetManagerFactory.emitted();
+        assertThat(emitted, hasSize(1));
+
+        Asset asset = emitted.get(0).outputs().get(0);
+        assertThat(asset.getId(), is(projectId));
+        assertThat(asset.getType(), is("io.kestra.plugin.ee.assets.Dataset"));
+        assertThat(asset.getMetadata().get("system"), is("hex"));
+        // The project's own page, which Hex only reports as the prefix of a run URL.
+        assertThat(asset.getMetadata().get("location"), is("https://app.hex.tech/hex/" + projectId));
+    }
+
+    @Test
+    void emitsNoAssetWhenEnableAutoIsFalse(WireMockRuntimeInfo wm) throws Exception {
+        String projectId = "proj-" + IdUtils.create();
+        String runId = "run-" + IdUtils.create();
+
+        stubFor(
+            post(urlEqualTo("/projects/" + projectId + "/runs"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(startBody(projectId, runId)))
+        );
+        stubFor(
+            get(urlEqualTo("/projects/" + projectId + "/runs/" + runId))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                    .withBody(statusBody(projectId, runId, "COMPLETED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:05Z")))
+        );
+
+        Run task = Run.builder()
+            .id(IdUtils.create())
+            .type(Run.class.getName())
+            .apiToken(Property.ofValue("dummy-token"))
+            .baseUrl(Property.ofValue(wm.getHttpBaseUrl()))
+            .projectId(Property.ofValue(projectId))
+            // Declared but off, which is the case the task's own gate has to catch.
+            .assets(new AssetsDeclaration(false, List.of(), List.of()))
+            .build();
+
+        task.run(runContext(task));
+
+        assertThat(assetManagerFactory.emitted(), is(empty()));
+    }
+
+    @Test
+    void completesWhenTheEditionCannotEmitAssets(WireMockRuntimeInfo wm) throws Exception {
+        String projectId = "proj-" + IdUtils.create();
+        String runId = "run-" + IdUtils.create();
+        assetManagerFactory.unsupported(true);
+
+        stubFor(
+            post(urlEqualTo("/projects/" + projectId + "/runs"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(startBody(projectId, runId)))
+        );
+        stubFor(
+            get(urlEqualTo("/projects/" + projectId + "/runs/" + runId))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                    .withBody(statusBody(projectId, runId, "COMPLETED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:05Z")))
+        );
+
+        Run task = Run.builder()
+            .id(IdUtils.create())
+            .type(Run.class.getName())
+            .apiToken(Property.ofValue("dummy-token"))
+            .baseUrl(Property.ofValue(wm.getHttpBaseUrl()))
+            .projectId(Property.ofValue(projectId))
+            .assets(new AssetsDeclaration(true, List.of(), List.of()))
+            .build();
+
+        Run.Output output = task.run(runContext(task));
+
+        assertThat(output.getStatus(), is("COMPLETED"));
     }
 
     private RunContext runContext(Run task) {
