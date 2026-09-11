@@ -29,8 +29,8 @@ import static org.hamcrest.Matchers.is;
 @WireMockTest
 class TriggerTest {
 
-    // Captured from a live Hex response: https://app.hex.tech/{workspaceId}/app/{projectId}/{projectVersion}/{runId}
-    private static final String WORKSPACE_ID = "01a08f70-7b40-75a6-826d-9884704d2ebe";
+    // Placeholder for the workspace segment of a real Hex run URL: https://app.hex.tech/{workspaceId}/app/{projectId}/{projectVersion}/{runId}
+    private static final String WORKSPACE_ID = "11111111-1111-1111-1111-111111111111";
 
     @Inject
     private RunContextFactory runContextFactory;
