@@ -3,8 +3,8 @@ package io.kestra.plugin.hex.projects;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.Locale;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -379,15 +379,18 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
             return null;
         }
 
-        var marker = "/" + projectId;
-        int at = runUrl.toLowerCase(Locale.ROOT).indexOf(marker.toLowerCase(Locale.ROOT));
-        if (at < 0) {
-            return null;
+        // Query and fragment are not part of the project's address.
+        var address = runUrl.split("[?#]", 2)[0];
+
+        var kept = new ArrayList<String>();
+        for (var segment : address.split("/")) {
+            kept.add(segment);
+            if (segment.equalsIgnoreCase(projectId)) {
+                return String.join("/", kept);
+            }
         }
 
-        // Anything other than a segment boundary means projectId only prefixed a longer segment.
-        int end = at + marker.length();
-        return end == runUrl.length() || "/?#".indexOf(runUrl.charAt(end)) >= 0 ? runUrl.substring(0, end) : null;
+        return null;
     }
 
     // Used for both the log line and the failure message, so a run reads the same either way.
