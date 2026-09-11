@@ -1,12 +1,10 @@
 package io.kestra.plugin.hex.projects;
 
 import java.io.IOException;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -375,37 +373,21 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
         }
     }
 
-    // Hex reports no project URL directly, so truncate the run URL right after its projectId path segment rather than guessing a shape.
+    // Hex reports no project URL directly, so keep the run URL truncated at its projectId segment rather than guessing a shape.
     private static String projectUrl(String runUrl, String projectId) {
-        if (runUrl == null) {
+        if (runUrl == null || projectId == null) {
             return null;
         }
 
-        URI uri;
-        try {
-            uri = new URI(runUrl);
-        } catch (URISyntaxException e) {
+        var marker = "/" + projectId;
+        int at = runUrl.toLowerCase(Locale.ROOT).indexOf(marker.toLowerCase(Locale.ROOT));
+        if (at < 0) {
             return null;
         }
 
-        // An opaque URI, such as a bare scheme, has no hierarchical path to walk.
-        if (uri.getPath() == null) {
-            return null;
-        }
-
-        var segments = uri.getPath().split("/");
-        for (var i = 0; i < segments.length; i++) {
-            if (segments[i].equalsIgnoreCase(projectId)) {
-                var path = String.join("/", Arrays.copyOfRange(segments, 0, i + 1));
-                try {
-                    return new URI(uri.getScheme(), null, uri.getHost(), uri.getPort(), path, null, null).toString();
-                } catch (URISyntaxException e) {
-                    return null;
-                }
-            }
-        }
-
-        return null;
+        // Anything other than a segment boundary means projectId only prefixed a longer segment.
+        int end = at + marker.length();
+        return end == runUrl.length() || "/?#".indexOf(runUrl.charAt(end)) >= 0 ? runUrl.substring(0, end) : null;
     }
 
     // Used for both the log line and the failure message, so a run reads the same either way.

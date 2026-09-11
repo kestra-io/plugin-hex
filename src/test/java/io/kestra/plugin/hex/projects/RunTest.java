@@ -526,6 +526,71 @@ class RunTest {
     }
 
     @Test
+    void emitsProjectLocationRegardlessOfRunUrlShape(WireMockRuntimeInfo wm) throws Exception {
+        String projectId = "proj-" + IdUtils.create();
+        String runId = "run-" + IdUtils.create();
+        // Deliberately not the app/{projectId}/{version}/{runId} shape every other fixture uses: an extra
+        // leading "orgs" segment and a "view" segment instead of a version number, to prove the scan for
+        // the projectId segment does not assume a fixed position.
+        String runUrl = "https://app.hex.tech/orgs/" + WORKSPACE_ID + "/app/" + projectId + "/view/" + runId;
+
+        stubFor(
+            post(urlEqualTo("/projects/" + projectId + "/runs"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(startBodyForRunUrl(projectId, runId, runUrl)))
+        );
+        stubFor(
+            get(urlEqualTo("/projects/" + projectId + "/runs/" + runId))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                    .withBody(statusBodyForRunUrl(projectId, runId, "COMPLETED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:05Z", runUrl)))
+        );
+
+        Run task = Run.builder()
+            .id(IdUtils.create())
+            .type(Run.class.getName())
+            .apiToken(Property.ofValue("dummy-token"))
+            .baseUrl(Property.ofValue(wm.getHttpBaseUrl()))
+            .projectId(Property.ofValue(projectId))
+            .assets(new AssetsDeclaration(true, List.of(), List.of()))
+            .build();
+
+        task.run(runContext(task));
+
+        Asset asset = assetManagerFactory.emitted().get(0).outputs().get(0);
+        assertThat(asset.getMetadata().get("location"), is("https://app.hex.tech/orgs/" + WORKSPACE_ID + "/app/" + projectId));
+    }
+
+    @Test
+    void emitsProjectLocationWithoutQueryStringOrFragment(WireMockRuntimeInfo wm) throws Exception {
+        String projectId = "proj-" + IdUtils.create();
+        String runId = "run-" + IdUtils.create();
+        String runUrl = "https://app.hex.tech/" + WORKSPACE_ID + "/app/" + projectId + "?tab=results#latest";
+
+        stubFor(
+            post(urlEqualTo("/projects/" + projectId + "/runs"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(startBodyForRunUrl(projectId, runId, runUrl)))
+        );
+        stubFor(
+            get(urlEqualTo("/projects/" + projectId + "/runs/" + runId))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                    .withBody(statusBodyForRunUrl(projectId, runId, "COMPLETED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:05Z", runUrl)))
+        );
+
+        Run task = Run.builder()
+            .id(IdUtils.create())
+            .type(Run.class.getName())
+            .apiToken(Property.ofValue("dummy-token"))
+            .baseUrl(Property.ofValue(wm.getHttpBaseUrl()))
+            .projectId(Property.ofValue(projectId))
+            .assets(new AssetsDeclaration(true, List.of(), List.of()))
+            .build();
+
+        task.run(runContext(task));
+
+        Asset asset = assetManagerFactory.emitted().get(0).outputs().get(0);
+        assertThat(asset.getMetadata().get("location"), is("https://app.hex.tech/" + WORKSPACE_ID + "/app/" + projectId));
+    }
+
+    @Test
     void emitsAssetWithoutLocationWhenTheRunUrlHasNoProjectIdSegment(WireMockRuntimeInfo wm) throws Exception {
         String projectId = "proj-" + IdUtils.create();
         String runId = "run-" + IdUtils.create();
@@ -657,6 +722,35 @@ class RunTest {
               "traceId": "trace-1"
             }
             """.formatted(projectId, runId, WORKSPACE_ID, urlProjectId, runId, status, jsonValue(startTime), jsonValue(endTime));
+    }
+
+    // For tests that need a runUrl shape other than the app/{projectId}/{version}/{runId} fixture above.
+    private static String startBodyForRunUrl(String projectId, String runId, String runUrl) {
+        return """
+            {
+              "projectId": "%s",
+              "runId": "%s",
+              "runUrl": "%s",
+              "runStatusUrl": "https://app.hex.tech/api/v1/projects/%s/runs/%s",
+              "traceId": "trace-1",
+              "projectVersion": "3"
+            }
+            """.formatted(projectId, runId, runUrl, projectId, runId);
+    }
+
+    private static String statusBodyForRunUrl(String projectId, String runId, String status, String startTime, String endTime, String runUrl) {
+        return """
+            {
+              "projectId": "%s",
+              "runId": "%s",
+              "runUrl": "%s",
+              "status": "%s",
+              "projectVersion": "3",
+              "startTime": %s,
+              "endTime": %s,
+              "traceId": "trace-1"
+            }
+            """.formatted(projectId, runId, runUrl, status, jsonValue(startTime), jsonValue(endTime));
     }
 
     private static String jsonValue(String value) {
