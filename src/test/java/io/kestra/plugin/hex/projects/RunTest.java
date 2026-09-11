@@ -60,6 +60,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 @Execution(ExecutionMode.SAME_THREAD)
 class RunTest {
 
+    // Captured from a live Hex response: https://app.hex.tech/{workspaceId}/app/{projectId}/{projectVersion}/{runId}
+    private static final String WORKSPACE_ID = "01a08f70-7b40-75a6-826d-9884704d2ebe";
+
     @Inject
     private RunContextFactory runContextFactory;
 
@@ -116,7 +119,7 @@ class RunTest {
         Run.Output output = task.run(runContext(task));
 
         assertThat(output.getRunId(), is(runId));
-        assertThat(output.getRunUrl(), is("https://app.hex.tech/hex/" + projectId + "/run/" + runId));
+        assertThat(output.getRunUrl(), is("https://app.hex.tech/" + WORKSPACE_ID + "/app/" + projectId + "/3/" + runId));
         assertThat(output.getStatus(), is("COMPLETED"));
         assertThat(output.getProjectVersion(), is("3"));
         assertThat(output.getElapsedTime(), is(Duration.ofSeconds(5)));
@@ -179,7 +182,7 @@ class RunTest {
         Run.Output output = task.run(runContext(task));
 
         assertThat(output.getRunId(), is(runId));
-        assertThat(output.getRunUrl(), is("https://app.hex.tech/hex/" + projectId + "/run/" + runId));
+        assertThat(output.getRunUrl(), is("https://app.hex.tech/" + WORKSPACE_ID + "/app/" + projectId + "/3/" + runId));
         assertThat(output.getStatus(), is("RUNNING"));
         // A queued run is not a produced dataset, even though the task succeeded.
         assertThat(assetManagerFactory.emitted(), is(empty()));
@@ -435,7 +438,7 @@ class RunTest {
 
         assertThat(completion.getLevel(), is(Level.INFO));
         assertThat(completion.getMessage(), containsString("finished with status COMPLETED in 1 minute 23 seconds"));
-        assertThat(completion.getMessage(), containsString("https://app.hex.tech/hex/" + projectId + "/run/" + runId));
+        assertThat(completion.getMessage(), containsString("https://app.hex.tech/" + WORKSPACE_ID + "/app/" + projectId + "/3/" + runId));
     }
 
     @Test
@@ -485,8 +488,74 @@ class RunTest {
         assertThat(asset.getId(), is(projectId));
         assertThat(asset.getType(), is("io.kestra.plugin.ee.assets.Dataset"));
         assertThat(asset.getMetadata().get("system"), is("hex"));
-        // The project's own page, which Hex only reports as the prefix of a run URL.
-        assertThat(asset.getMetadata().get("location"), is("https://app.hex.tech/hex/" + projectId));
+        // The project's own page: the run URL truncated right after the projectId path segment.
+        assertThat(asset.getMetadata().get("location"), is("https://app.hex.tech/" + WORKSPACE_ID + "/app/" + projectId));
+    }
+
+    @Test
+    void emitsProjectLocationWhenProjectIdCaseDiffersFromTheRunUrlSegment(WireMockRuntimeInfo wm) throws Exception {
+        String projectId = "PROJ-" + IdUtils.create();
+        String runId = "run-" + IdUtils.create();
+        // Simulates Hex returning the project id in a different case in the run URL than the one configured.
+        String urlProjectId = projectId.toLowerCase();
+
+        stubFor(
+            post(urlEqualTo("/projects/" + projectId + "/runs"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(startBody(projectId, runId, urlProjectId)))
+        );
+        stubFor(
+            get(urlEqualTo("/projects/" + projectId + "/runs/" + runId))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                    .withBody(statusBody(projectId, runId, "COMPLETED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:05Z", urlProjectId)))
+        );
+
+        Run task = Run.builder()
+            .id(IdUtils.create())
+            .type(Run.class.getName())
+            .apiToken(Property.ofValue("dummy-token"))
+            .baseUrl(Property.ofValue(wm.getHttpBaseUrl()))
+            .projectId(Property.ofValue(projectId))
+            .assets(new AssetsDeclaration(true, List.of(), List.of()))
+            .build();
+
+        task.run(runContext(task));
+
+        Asset asset = assetManagerFactory.emitted().get(0).outputs().get(0);
+        // Truncated at the matched segment as returned by Hex, not rewritten to the configured case.
+        assertThat(asset.getMetadata().get("location"), is("https://app.hex.tech/" + WORKSPACE_ID + "/app/" + urlProjectId));
+    }
+
+    @Test
+    void emitsAssetWithoutLocationWhenTheRunUrlHasNoProjectIdSegment(WireMockRuntimeInfo wm) throws Exception {
+        String projectId = "proj-" + IdUtils.create();
+        String runId = "run-" + IdUtils.create();
+
+        stubFor(
+            post(urlEqualTo("/projects/" + projectId + "/runs"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(startBody(projectId, runId, "unrelated-id")))
+        );
+        stubFor(
+            get(urlEqualTo("/projects/" + projectId + "/runs/" + runId))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                    .withBody(statusBody(projectId, runId, "COMPLETED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:05Z", "unrelated-id")))
+        );
+
+        Run task = Run.builder()
+            .id(IdUtils.create())
+            .type(Run.class.getName())
+            .apiToken(Property.ofValue("dummy-token"))
+            .baseUrl(Property.ofValue(wm.getHttpBaseUrl()))
+            .projectId(Property.ofValue(projectId))
+            .assets(new AssetsDeclaration(true, List.of(), List.of()))
+            .build();
+
+        Run.Output output = task.run(runContext(task));
+
+        assertThat(output.getStatus(), is("COMPLETED"));
+
+        Asset asset = assetManagerFactory.emitted().get(0).outputs().get(0);
+        assertThat(asset.getMetadata().get("system"), is("hex"));
+        assertThat(asset.getMetadata().containsKey("location"), is(false));
     }
 
     @Test
@@ -554,31 +623,40 @@ class RunTest {
     }
 
     private static String startBody(String projectId, String runId) {
+        return startBody(projectId, runId, projectId);
+    }
+
+    // urlProjectId lets a test put a different-case, or unrelated, segment in runUrl than the configured projectId.
+    private static String startBody(String projectId, String runId, String urlProjectId) {
         return """
             {
               "projectId": "%s",
               "runId": "%s",
-              "runUrl": "https://app.hex.tech/hex/%s/run/%s",
+              "runUrl": "https://app.hex.tech/%s/app/%s/3/%s",
               "runStatusUrl": "https://app.hex.tech/api/v1/projects/%s/runs/%s",
               "traceId": "trace-1",
               "projectVersion": "3"
             }
-            """.formatted(projectId, runId, projectId, runId, projectId, runId);
+            """.formatted(projectId, runId, WORKSPACE_ID, urlProjectId, runId, projectId, runId);
     }
 
     private static String statusBody(String projectId, String runId, String status, String startTime, String endTime) {
+        return statusBody(projectId, runId, status, startTime, endTime, projectId);
+    }
+
+    private static String statusBody(String projectId, String runId, String status, String startTime, String endTime, String urlProjectId) {
         return """
             {
               "projectId": "%s",
               "runId": "%s",
-              "runUrl": "https://app.hex.tech/hex/%s/run/%s",
+              "runUrl": "https://app.hex.tech/%s/app/%s/3/%s",
               "status": "%s",
               "projectVersion": "3",
               "startTime": %s,
               "endTime": %s,
               "traceId": "trace-1"
             }
-            """.formatted(projectId, runId, projectId, runId, status, jsonValue(startTime), jsonValue(endTime));
+            """.formatted(projectId, runId, WORKSPACE_ID, urlProjectId, runId, status, jsonValue(startTime), jsonValue(endTime));
     }
 
     private static String jsonValue(String value) {

@@ -1,8 +1,11 @@
 package io.kestra.plugin.hex.projects;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -350,9 +353,11 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
             // The asset is the project, so no run-scoped fields: they go stale on the next run.
             var metadata = new LinkedHashMap<String, Object>();
             metadata.put("system", ASSET_SYSTEM);
-            var location = projectUrl(run.runUrl());
+            var location = projectUrl(run.runUrl(), projectId);
             if (location != null) {
                 metadata.put("location", location);
+            } else {
+                runContext.logger().debug("Could not derive the asset location from run URL '{}' for project '{}'.", run.runUrl(), projectId);
             }
 
             // The id stays verbatim: Asset.id allows mixed case, and rewriting it splits the node.
@@ -370,14 +375,37 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
         }
     }
 
-    // Hex reports no project URL, so the project's page is everything before the last run segment.
-    private static String projectUrl(String runUrl) {
+    // Hex reports no project URL directly, so truncate the run URL right after its projectId path segment rather than guessing a shape.
+    private static String projectUrl(String runUrl, String projectId) {
         if (runUrl == null) {
             return null;
         }
 
-        int runSegment = runUrl.lastIndexOf("/run/");
-        return runSegment > 0 ? runUrl.substring(0, runSegment) : null;
+        URI uri;
+        try {
+            uri = new URI(runUrl);
+        } catch (URISyntaxException e) {
+            return null;
+        }
+
+        // An opaque URI, such as a bare scheme, has no hierarchical path to walk.
+        if (uri.getPath() == null) {
+            return null;
+        }
+
+        var segments = uri.getPath().split("/");
+        for (var i = 0; i < segments.length; i++) {
+            if (segments[i].equalsIgnoreCase(projectId)) {
+                var path = String.join("/", Arrays.copyOfRange(segments, 0, i + 1));
+                try {
+                    return new URI(uri.getScheme(), null, uri.getHost(), uri.getPort(), path, null, null).toString();
+                } catch (URISyntaxException e) {
+                    return null;
+                }
+            }
+        }
+
+        return null;
     }
 
     // Used for both the log line and the failure message, so a run reads the same either way.
