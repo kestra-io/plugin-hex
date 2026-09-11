@@ -3,6 +3,7 @@ package io.kestra.plugin.hex.projects;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -350,9 +351,11 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
             // The asset is the project, so no run-scoped fields: they go stale on the next run.
             var metadata = new LinkedHashMap<String, Object>();
             metadata.put("system", ASSET_SYSTEM);
-            var location = projectUrl(run.runUrl());
+            var location = projectUrl(run.runUrl(), projectId);
             if (location != null) {
                 metadata.put("location", location);
+            } else {
+                runContext.logger().debug("Could not derive the asset location from run URL '{}' for project '{}'.", run.runUrl(), projectId);
             }
 
             // The id stays verbatim: Asset.id allows mixed case, and rewriting it splits the node.
@@ -370,14 +373,24 @@ public class Run extends Task implements RunnableTask<Run.Output>, HexConnection
         }
     }
 
-    // Hex reports no project URL, so the project's page is everything before the last run segment.
-    private static String projectUrl(String runUrl) {
-        if (runUrl == null) {
+    // Hex reports no project URL directly, so keep the run URL truncated at its projectId segment rather than guessing a shape.
+    private static String projectUrl(String runUrl, String projectId) {
+        if (runUrl == null || projectId == null) {
             return null;
         }
 
-        int runSegment = runUrl.lastIndexOf("/run/");
-        return runSegment > 0 ? runUrl.substring(0, runSegment) : null;
+        // Query and fragment are not part of the project's address.
+        var address = runUrl.split("[?#]", 2)[0];
+
+        var kept = new ArrayList<String>();
+        for (var segment : address.split("/")) {
+            kept.add(segment);
+            if (segment.equalsIgnoreCase(projectId)) {
+                return String.join("/", kept);
+            }
+        }
+
+        return null;
     }
 
     // Used for both the log line and the failure message, so a run reads the same either way.
